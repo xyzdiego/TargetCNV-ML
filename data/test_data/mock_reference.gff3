@@ -1,0 +1,21 @@
+##gff-version 3
+chr1	Simulated	gene	10000	14000	.	+	.	ID=gene:Soltor1_01g000010;Name=Soltor1_01g000010;
+chr1	Simulated	gene	35000	39000	.	+	.	ID=gene:Soltor1_01g000020;Name=Soltor1_01g000020;
+chr1	Simulated	gene	60000	64000	.	+	.	ID=gene:Soltor1_01g000030;Name=Soltor1_01g000030;
+chr1	Simulated	gene	85000	89000	.	+	.	ID=gene:Soltor1_01g000040;Name=Soltor1_01g000040;
+chr1	Simulated	gene	110000	114000	.	+	.	ID=gene:Soltor1_01g000050;Name=Soltor1_01g000050;
+chr1	Simulated	gene	135000	139000	.	+	.	ID=gene:Soltor1_01g000060;Name=Soltor1_01g000060;
+chr1	Simulated	gene	160000	164000	.	+	.	ID=gene:Soltor1_01g000070;Name=Soltor1_01g000070;
+chr1	Simulated	gene	185000	189000	.	+	.	ID=gene:Soltor1_01g000080;Name=Soltor1_01g000080;
+chr1	Simulated	gene	210000	214000	.	+	.	ID=gene:Soltor1_01g000090;Name=Soltor1_01g000090;
+chr1	Simulated	gene	235000	239000	.	+	.	ID=gene:Soltor1_01g000100;Name=Soltor1_01g000100;
+chr1	Simulated	gene	260000	264000	.	+	.	ID=gene:Soltor1_01g000110;Name=Soltor1_01g000110;
+chr1	Simulated	gene	285000	289000	.	+	.	ID=gene:Soltor1_01g000120;Name=Soltor1_01g000120;
+chr1	Simulated	gene	310000	314000	.	+	.	ID=gene:Soltor1_01g000130;Name=Soltor1_01g000130;
+chr1	Simulated	gene	335000	339000	.	+	.	ID=gene:Soltor1_01g000140;Name=Soltor1_01g000140;
+chr1	Simulated	gene	360000	364000	.	+	.	ID=gene:Soltor1_01g000150;Name=Soltor1_01g000150;
+chr1	Simulated	gene	385000	389000	.	+	.	ID=gene:Soltor1_01g000160;Name=Soltor1_01g000160;
+chr1	Simulated	gene	410000	414000	.	+	.	ID=gene:Soltor1_01g000170;Name=Soltor1_01g000170;
+chr1	Simulated	gene	435000	439000	.	+	.	ID=gene:Soltor1_01g000180;Name=Soltor1_01g000180;
+chr1	Simulated	gene	460000	464000	.	+	.	ID=gene:Soltor1_01g000190;Name=Soltor1_01g000190;
+chr1	Simulated	gene	485000	489000	.	+	.	ID=gene:Soltor1_01g000200;Name=Soltor1_01g000200;

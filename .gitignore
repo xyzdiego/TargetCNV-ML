@@ -1,0 +1,45 @@
+# Entornos e historiales de R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+renv/library/
+renv/staging/
+
+# Archivos de datos masivos y binarios (Se descargan por Zenodo)
+data/**/*.csv
+data/**/*.tsv
+data/**/*.fasta
+data/**/*.gff
+data/**/*.gff3
+data/**/*.xlsx
+data/*.csv
+data/*.tsv
+data/*.fasta
+data/*.gff
+data/*.gff3
+data/*.xlsx
+models/*.rds
+models/*.RData
+models/**/*.rds
+!data/**/.gitkeep
+!models/**/.gitkeep
+
+# Excepciones para Minimal Working Example (archivos ligeros para testing)
+!data/test_data/*.tsv
+!data/test_data/*.gff
+!data/test_data/*.gff3
+data/test_data/prepared/
+data/test_data/models/
+data/test_data/results/
+
+# Salidas locales
+results/*
+!results/.gitkeep
+*.html
+*.knit.md
+
+# Archivos del SO
+.DS_Store
+Thumbs.db

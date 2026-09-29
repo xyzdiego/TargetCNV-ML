@@ -1,0 +1,24 @@
+##gff-version 3
+chr1	Scipio:Captus	protein_match:NUC	10200	13700	1.00	+	.	ID=NUC_01;Name=OG0000001__00;Target=Soltor1_01g000010.1-OG0000001 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	35200	38700	1.00	+	.	ID=NUC_02;Name=OG0000002__00;Target=Soltor1_01g000020.1-OG0000002 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	39700	41700	0.85	+	.	ID=NUC_02_2;Name=OG0000002__01;Target=Soltor1_01g000020.1-OG0000002 1-100
+chr1	Scipio:Captus	protein_match:NUC	60200	63700	1.00	+	.	ID=NUC_03;Name=OG0000003__00;Target=Soltor1_01g000030.1-OG0000003 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	85200	88700	1.00	+	.	ID=NUC_04;Name=OG0000004__00;Target=Soltor1_01g000040.1-OG0000004 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	89700	91700	0.85	+	.	ID=NUC_04_2;Name=OG0000004__01;Target=Soltor1_01g000040.1-OG0000004 1-100
+chr1	Scipio:Captus	protein_match:NUC	110200	113700	1.00	+	.	ID=NUC_05;Name=OG0000005__00;Target=Soltor1_01g000050.1-OG0000005 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	135200	138700	1.00	+	.	ID=NUC_06;Name=OG0000006__00;Target=Soltor1_01g000060.1-OG0000006 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	139700	141700	0.85	+	.	ID=NUC_06_2;Name=OG0000006__01;Target=Soltor1_01g000060.1-OG0000006 1-100
+chr1	Scipio:Captus	protein_match:NUC	160200	163700	1.00	+	.	ID=NUC_07;Name=OG0000007__00;Target=Soltor1_01g000070.1-OG0000007 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	185200	188700	1.00	+	.	ID=NUC_08;Name=OG0000008__00;Target=Soltor1_01g000080.1-OG0000008 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	210200	213700	1.00	+	.	ID=NUC_09;Name=OG0000009__00;Target=Soltor1_01g000090.1-OG0000009 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	235200	238700	1.00	+	.	ID=NUC_10;Name=OG0000010__00;Target=Soltor1_01g000100.1-OG0000010 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	260200	263700	1.00	+	.	ID=NUC_11;Name=OG0000011__00;Target=Soltor1_01g000110.1-OG0000011 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	285200	288700	1.00	+	.	ID=NUC_12;Name=OG0000012__00;Target=Soltor1_01g000120.1-OG0000012 1-100 101-400
+chr1	Scipio:Captus	protein_match:NUC	50050000	50051200	0.35	+	.	ID=NUC_13;Name=OG0000013__00;Target=Unmatched_OG0000013 1-50
+chr1	Scipio:Captus	protein_match:NUC	50100000	50101200	0.35	+	.	ID=NUC_14;Name=OG0000014__00;Target=Unmatched_OG0000014 1-50
+chr1	Scipio:Captus	protein_match:NUC	50150000	50151200	0.35	+	.	ID=NUC_15;Name=OG0000015__00;Target=Unmatched_OG0000015 1-50
+chr1	Scipio:Captus	protein_match:NUC	50200000	50201200	0.35	+	.	ID=NUC_16;Name=OG0000016__00;Target=Unmatched_OG0000016 1-50
+chr1	Scipio:Captus	protein_match:NUC	50250000	50251200	0.35	+	.	ID=NUC_17;Name=OG0000017__00;Target=Unmatched_OG0000017 1-50
+chr1	Scipio:Captus	protein_match:NUC	50300000	50301200	0.35	+	.	ID=NUC_18;Name=OG0000018__00;Target=Unmatched_OG0000018 1-50
+chr1	Scipio:Captus	protein_match:NUC	50350000	50351200	0.35	+	.	ID=NUC_19;Name=OG0000019__00;Target=Unmatched_OG0000019 1-50
+chr1	Scipio:Captus	protein_match:NUC	50400000	50401200	0.35	+	.	ID=NUC_20;Name=OG0000020__00;Target=Unmatched_OG0000020 1-50
