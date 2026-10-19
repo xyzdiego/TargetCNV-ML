@@ -39,7 +39,11 @@ results/*
 !results/.gitkeep
 *.html
 *.knit.md
+*.qmd
 
 # Archivos del SO
 .DS_Store
 Thumbs.db
+
+# Codigo legacy y archivos de archivo local
+archive/
