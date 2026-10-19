@@ -234,7 +234,7 @@ If you use **TargetCNV-ML** in academic research or applied genomics pipelines, 
 
 ```bibtex
 @software{targetcnv_ml_2026,
-  author       = {Benítez Duarte, Diego Andrés and Directores de la tesis},
+  author       = {Benítez Duarte, Diego Andrés},
   title        = {{TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture}},
   month        = jul,
   year         = 2026,
@@ -247,10 +247,10 @@ If you use **TargetCNV-ML** in academic research or applied genomics pipelines, 
 @mastersthesis{benitez_duarte_thesis_2026,
   author       = {Benítez Duarte, Diego Andrés},
   title        = {{Desarrollo de un flujo de trabajo bioinformático para la Detección de Variación en el Número de Copias (CNV) de genes a partir de secuencias genómicas de lectura corta}},
-  school       = {Universidad / Institución Académica},
+  school       = {Universidad Nacional de Colombia},
   year         = 2026,
   address      = {Colombia},
-  note         = {Tesis de Maestría}
+  note         = {Master Thesis - Bioinformatics}
 }
 ```
 
