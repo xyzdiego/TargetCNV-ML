@@ -110,7 +110,7 @@ chmod +x run_test_pipeline.sh
 > [!WARNING]
 > **Pre-trained Models & Zenodo Assets:**
 > In accordance with open-science standards, large genomic references and serialized models (`models/*.rds`) are archived on **Zenodo** to prevent Git repository bloat. Before running Step 3 (`03_cnv_inference.R`) on production datasets without re-training:
-> 1. Download the pre-trained model bundle from Zenodo DOI: [`10.5281/zenodo.XXXXXXX`](https://doi.org/10.5281/zenodo.XXXXXXX).
+> 1. Download the pre-trained model bundle from Zenodo DOI: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
 > 2. Extract the `.rds` files into the local `models/` directory:
 >    ```bash
 >    tar -xzf targetcnv_pretrained_models.tar.gz -C models/
@@ -258,4 +258,5 @@ If you use **TargetCNV-ML** in academic research or applied genomics pipelines, 
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. 
+The datasets and pre-trained models hosted on Zenodo are licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
