@@ -110,7 +110,7 @@ chmod +x run_test_pipeline.sh
 > [!WARNING]
 > **Modelos Preentrenados y Archivos en Zenodo:**
 > Siguiendo las directrices de ciencia abierta, los genomas de referencia de gran volumen y los modelos serializados (`models/*.rds`) se encuentran archivados en **Zenodo** para evitar el crecimiento excesivo del repositorio Git. Antes de ejecutar el Paso 3 (`03_cnv_inference.R`) sobre conjuntos de datos en producción sin reentrenar:
-> 1. Descargue el paquete de modelos preentrenados desde el DOI de Zenodo: [`10.5281/zenodo.XXXXXXX`](https://doi.org/10.5281/zenodo.XXXXXXX).
+> 1. Descargue el paquete de modelos preentrenados desde el DOI de Zenodo: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
 > 2. Extraiga los archivos `.rds` en el directorio local `models/`:
 >    ```bash
 >    tar -xzf targetcnv_pretrained_models.tar.gz -C models/
@@ -259,3 +259,4 @@ Si utiliza **TargetCNV-ML** en su investigación académica o en pipelines de ge
 ## Licencia
 
 Este proyecto está distribuido bajo la **Licencia MIT** — consulte el archivo [LICENSE](LICENSE) para más detalles.
+Los conjuntos de datos y los modelos preentrenados alojados en Zenodo están licenciados bajo la Licencia Creative Commons Atribución 4.0 Internacional (CC BY 4.0).
