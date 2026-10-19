@@ -312,7 +312,7 @@ predict_weighted_heuristic <- function(df_predictors, thresholds, weights, globa
 #' @param min_votes Umbral minimo de votos TP para validar la secuencia homóloga (por defecto 4).
 #'
 #' @return El \code{data.frame} de entrada complementado con las columnas \code{Votos_TP}
-#'   y \code{Veredicto_Consenso} ("Ortologo_Valido" o "Ruido_Descartado").
+#'   y \code{Veredicto_Consenso} ("Homologo_Valido" o "Ruido_Descartado").
 #' @export
 consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   stopifnot(is.data.frame(df_predictions))
@@ -325,7 +325,7 @@ consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   df_predictions$Votos_TP <- votos_totales
   df_predictions$Veredicto_Consenso <- dplyr::if_else(
     votos_totales >= min_votes,
-    "Ortologo_Valido",
+    "Homologo_Valido",
     "Ruido_Descartado"
   )
 

@@ -274,6 +274,39 @@ out_bench_tsv <- file.path(opt$out_models, "benchmark_models.tsv")
 utils::write.table(df_benchmark, file = out_bench_tsv, sep = "\t", row.names = FALSE, quote = FALSE)
 saveRDS(df_benchmark, file = file.path(opt$out_models, "benchmark_models.rds"))
 
+# Guardar metricas Youden detalladas
+df_youden_bench <- youden_eval$benchmark
+df_youden_bench$ROC_AUC <- sapply(metricas_base, function(v) as.numeric(youden_eval$roc_objects[[v]]$auc))
+df_youden_bench$Umbral <- sapply(metricas_base, function(v) round(youden_eval$thresholds[[v]], 3))
+df_youden_bench$Indice_Youden_J <- df_youden_bench$Sensibilidad + df_youden_bench$Especificidad - 1
+saveRDS(df_youden_bench, file = file.path(opt$out_models, "youden_benchmark.rds"))
+utils::write.table(df_youden_bench, file = file.path(opt$out_models, "youden_benchmark.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
+
+# Consolidar matrices de confusion
+cm_youden <- list()
+for (var in metricas_base) {
+  pred_y <- factor(ifelse(df_ml[[var]] >= youden_eval$thresholds[[var]], "TP", "FP"), levels = c("TP", "FP"))
+  cm_youden[[var]] <- table(Prediccion = pred_y, Referencia = df_ml$Clase)
+}
+
+pred_h <- predict_weighted_heuristic(df_ml, youden_eval$thresholds, heuristic_res$weights, heuristic_res$global_threshold)
+cm_heur <- table(Prediccion = pred_h, Referencia = df_ml$Clase)
+
+cm_ml <- list()
+for (m_name in names(trained_models)) {
+  p <- trained_models[[m_name]]$pred
+  if (!is.null(p)) {
+    cm_ml[[m_name]] <- table(Prediccion = p$pred, Referencia = p$obs)
+  }
+}
+
+confusion_matrices <- list(
+  youden = cm_youden,
+  heuristic = cm_heur,
+  ml = cm_ml
+)
+saveRDS(confusion_matrices, file = file.path(opt$out_models, "confusion_matrices.rds"))
+
 cat("-----------------------------------------------------------------\n")
 cat(" BENCHMARK COMPARATIVO FINAL:\n")
 cat("-----------------------------------------------------------------\n")

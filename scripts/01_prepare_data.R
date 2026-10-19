@@ -70,13 +70,6 @@ option_list <- list(
     default = file.path(project_root, "data"),
     help = "Directorio donde se guardaran los datos preparados [Por defecto: data/]",
     metavar = "DIR"
-  ),
-  make_option(
-    c("-m", "--max_distance"),
-    type = "integer",
-    default = 50,
-    help = "Distancia sintenica maxima (num de genes) para rescate en tandem [Por defecto: 50]",
-    metavar = "INT"
   )
 )
 

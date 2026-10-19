@@ -1501,6 +1501,8 @@ df_clasificacion_base_ste <- df_cruces_ste %>%
         ID_Captus = if_else(str_detect(ID_Captus, "__[0-9]+$"),
                             ID_Captus,
                             paste0(ID_Captus, "__00")),
+        # CORRECCION: el formato es "g65393.t1" -- el numero va entre "g" y "."
+        Num_Gen = as.numeric(str_extract(Locus_Ref_Limpio, "(?<=^g)[0-9]+")),
         # Ahora comparamos HOG vs HOG, en el mismo espacio de nombres
         Validacion_Estricta = case_when(
             !is.na(OG_Ste) & !is.na(HOG_ID) & HOG_ID == OG_Ste ~ "TRUE_POSITIVE",
@@ -1510,6 +1512,58 @@ df_clasificacion_base_ste <- df_cruces_ste %>%
 
 cat("\nValidacion Estricta (puente OG->HOG):\n")
 print(table(df_clasificacion_base_ste$Validacion_Estricta))
+
+# Algoritmo de Rescate Espacial (adaptado para genoma fragmentado)
+# Usa Contig_Name como unidad espacial ya que los loci de referencia
+# (g<N>.t1) no incluyen prefijo cromosómico.
+df_clasificacion_rescate_ste <- df_clasificacion_base_ste %>%
+    group_by(OG_Captus) %>%
+    mutate(
+        Tiene_Ancla_TP = any(Validacion_Estricta == "TRUE_POSITIVE"),
+        Contigs_TP    = list(Contig_Name[Validacion_Estricta == "TRUE_POSITIVE"]),
+        Posiciones_TP = list(Num_Gen[Validacion_Estricta == "TRUE_POSITIVE"])
+    ) %>%
+    rowwise() %>%
+    mutate(
+        # Condición de Rescate con blindajes contra NA
+        Es_Tandem = if_else(
+            Validacion_Estricta == "FALSE_POSITIVE" &
+                Tiene_Ancla_TP &
+                !is.na(Num_Gen) &                        # blindaje contra NA
+                (Contig_Name %in% unlist(Contigs_TP)) &
+                length(unlist(Posiciones_TP)) > 0,       # blindaje contra lista vacia
+            any(abs(Num_Gen - unlist(Posiciones_TP)[
+                unlist(Contigs_TP) == Contig_Name]) <= 50,
+                na.rm = TRUE),
+            FALSE
+        ),
+        # isTRUE() evita que NA en Es_Tandem propague y convierta TPs en FPs
+        Validacion_Espacial = case_when(
+            Validacion_Estricta == "TRUE_POSITIVE" ~ "TRUE_POSITIVE",
+            isTRUE(Es_Tandem)                      ~ "TRUE_POSITIVE",
+            TRUE                                   ~ "FALSE_POSITIVE"
+        ),
+        Doble_Control_Biologico = case_when(
+            Validacion_Estricta == "TRUE_POSITIVE"        ~ "1_Validado_Exacto",
+            isTRUE(Es_Tandem)                             ~ "2_Rescatado_Paralogo_Tandem",
+            !is.na(OG_Ste) & HOG_ID != OG_Ste            ~ "3_Hit_Cruzado_OG_Vecino",
+            TRUE                                          ~ "4_Expansion_No_Anotada_o_Ruido"
+        ),
+        prioridad = case_when(
+            Doble_Control_Biologico == "1_Validado_Exacto"           ~ 0L,
+            Doble_Control_Biologico == "2_Rescatado_Paralogo_Tandem" ~ 1L,
+            TRUE                                                     ~ 2L
+        )
+    ) %>%
+    ungroup() %>%
+    arrange(prioridad) %>%
+    distinct(ID_Captus, .keep_all = TRUE) %>%
+    select(ID_Captus, Validacion_Espacial, Doble_Control_Biologico, Locus_Ref_Limpio)
+
+# Auditoría en consola
+cat("\nRescate Espacial S. stellatiglandulosum:\n")
+print(table(df_clasificacion_rescate_ste$Validacion_Espacial))
+print(table(df_clasificacion_rescate_ste$Doble_Control_Biologico))
 
 ## 5. INTEGRACIÓN DE ESTADÍSTICAS Y RESOLUCIÓN DE REDUNDANCIAS ---------------
 stats_captus_crudo_ste <- read.delim(path_stats_captus, header = TRUE, 
@@ -1973,6 +2027,9 @@ cat("\nTabla Final: S. stellatiglandulosum\n")
 print(df_comp_9_ste %>% select(Modelo, F1_Score, Exactitud, Sensibilidad, FDR))
 
 
+table(stats_captus$Doble_Control_Biologico)      # S. torvum
+table(stats_captus_cit$Doble_Control_Biologico)  # S. citrullifolium
+table(stats_captus_ste$Doble_Control_Biologico)  # S. stellatiglandulosum
 
 
 

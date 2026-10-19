@@ -28,7 +28,7 @@ plot_confusion_matrix <- function(cm_table,
                                   high_color = "#d35400") {
   stopifnot(is.table(cm_table) || is.matrix(cm_table))
 
-  cm_df <- as.data.frame(cm_table)
+  cm_df <- as.data.frame(as.table(cm_table))
   colnames(cm_df) <- c("Prediccion", "Referencia", "Frecuencia")
 
   cm_df <- cm_df %>%
@@ -363,7 +363,8 @@ plot_cnv_heatmap <- function(df_cnv_annotated,
 #' @export
 plot_consensus_distribution <- function(df_consensus,
                                         verdict_col = "Veredicto_Consenso",
-                                        colors = c("Ortologo_Valido" = "#27ae60",
+                                        colors = c("Homologo_Valido" = "#27ae60",
+                                                   "Ortologo_Valido" = "#27ae60",
                                                    "Ruido_Descartado" = "#c0392b"),
                                         title = "Clasificacion de Secuencias por Sistema de Consenso",
                                         subtitle = "Mayoría Simple (>= 4/6 Modelos)") {

@@ -86,6 +86,10 @@ echo -e "${BOLD}${BLUE}[PASO 3/3] Ejecutando 03_cnv_inference.R...${NC}"
 
 if [ -f "$RESULTS_DIR/cnv_matrix.tsv" ]; then
   echo -e "${GREEN}✓ Paso 3 completado exitosamente.${NC}\n"
+  # Sincronizar artefactos finales a results/ y models/ en la raiz para compatibilidad directa con Quarto
+  mkdir -p results models
+  cp -f "$RESULTS_DIR"/* results/ 2>/dev/null || true
+  cp -f "$MODELS_DIR"/* models/ 2>/dev/null || true
 else
   echo -e "${RED}✗ Error: No se genero cnv_matrix.tsv${NC}"
   exit 1

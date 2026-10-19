@@ -1,7 +1,7 @@
 #' Data Processing and Spatial Filtering Module for TargetCNV-ML
 #'
 #' Pure functions for data extraction, GFF coordinate intersections,
-#' spatial rescue, redundancy resolution, and CNV matrix generation.
+#' spatial classification, redundancy resolution, and CNV matrix generation.
 #'
 #' @name data_processing
 NULL
@@ -144,67 +144,6 @@ classify_spatial_hits <- function(df_cruces,
   return(df_clasificacion)
 }
 
-#' Algoritmo de Rescate Espacial por Homologo Tandem
-#'
-#' Evalua los hits marcados inicialmente como falsos positivos (FP) y rescata aquellos
-#' que se ubican en el mismo cromosoma a una distancia sintenica menor o igual al umbral
-#' de un Verdadero Positivo ancla para el mismo grupo homologo.
-#'
-#' @param df_base Data frame con coordenadas y clasificacion estricta inicial.
-#' @param og_col Columna del identificador de ortogrupo (por defecto "OG_Captus").
-#' @param chrom_col Columna que indica el cromosoma (por defecto "Cromosoma").
-#' @param gene_num_col Columna con el indice numerico del gen (por defecto "Num_Gen").
-#' @param class_col Columna con la clasificacion estricta (por defecto "Validacion_Estricta").
-#' @param max_distance Distancia maxima en numero de genes para considerar un tandem (por defecto 50).
-#'
-#' @return Un \code{data.frame} actualizado con las columnas \code{Validacion_Espacial} y
-#'   \code{Doble_Control_Biologico} tras el rescate espacial.
-#' @export
-rescue_tandem_duplicates <- function(df_base,
-                                     og_col = "OG_Captus",
-                                     chrom_col = "Cromosoma",
-                                     gene_num_col = "Num_Gen",
-                                     class_col = "Validacion_Estricta",
-                                     max_distance = 50) {
-  stopifnot(is.data.frame(df_base))
-
-  df_rescatado <- df_base %>%
-    dplyr::group_by(.data[[og_col]]) %>%
-    dplyr::mutate(
-      Tiene_Ancla_TP = any(.data[[class_col]] == "TRUE_POSITIVE"),
-      Chroms_TP = list(.data[[chrom_col]][.data[[class_col]] == "TRUE_POSITIVE"]),
-      Posiciones_TP = list(.data[[gene_num_col]][.data[[class_col]] == "TRUE_POSITIVE"])
-    ) %>%
-    dplyr::rowwise() %>%
-    dplyr::mutate(
-      Es_Tandem = dplyr::if_else(
-        .data[[class_col]] == "FALSE_POSITIVE" &
-          Tiene_Ancla_TP &
-          (.data[[chrom_col]] %in% unlist(Chroms_TP)),
-        any(abs(.data[[gene_num_col]] - unlist(Posiciones_TP)[unlist(Chroms_TP) == .data[[chrom_col]]]) <= max_distance),
-        FALSE
-      ),
-      Validacion_Espacial = dplyr::case_when(
-        .data[[class_col]] == "TRUE_POSITIVE" ~ "TRUE_POSITIVE",
-        Es_Tandem ~ "TRUE_POSITIVE",
-        TRUE ~ "FALSE_POSITIVE"
-      ),
-      Doble_Control_Biologico = dplyr::case_when(
-        .data[[class_col]] == "TRUE_POSITIVE" ~ "1_Validado_Benoit_Exacto",
-        Es_Tandem ~ "2_Rescatado_Paralogo_Tandem",
-        TRUE ~ "3_No_Rescatado_o_Ruido"
-      ),
-      prioridad = dplyr::case_when(
-        Doble_Control_Biologico == "1_Validado_Benoit_Exacto" ~ 0L,
-        Doble_Control_Biologico == "2_Rescatado_Paralogo_Tandem" ~ 1L,
-        TRUE ~ 2L
-      )
-    ) %>%
-    dplyr::ungroup()
-
-  return(df_rescatado)
-}
-
 #' Resolucion de Redundancias Espaciales y Degradacion a Falso Positivo
 #'
 #' Ordena las secuencias asignadas a un mismo locus genomico segun su calidad
@@ -214,16 +153,20 @@ rescue_tandem_duplicates <- function(df_base,
 #' @param df Data frame integrado con estadisticas y validacion espacial.
 #' @param locus_col Nombre de la columna del locus de referencia (por defecto "Locus_Ref_Limpio").
 #' @param class_col Nombre de la columna de validacion espacial (por defecto "Validacion_Espacial").
+#' @param sample_col Columna que identifica la muestra (por defecto detecta "sample_name" si existe).
 #'
 #' @return Un \code{data.frame} donde solo el hit principal conserva el estado \code{TRUE_POSITIVE}.
 #' @export
 resolve_redundancies <- function(df,
                                  locus_col = "Locus_Ref_Limpio",
-                                 class_col = "Validacion_Espacial") {
+                                 class_col = "Validacion_Espacial",
+                                 sample_col = if ("sample_name" %in% colnames(df)) "sample_name" else NULL) {
   stopifnot(is.data.frame(df))
 
+  group_vars <- c(sample_col, locus_col, class_col)
+
   df %>%
-    dplyr::group_by(.data[[locus_col]], .data[[class_col]]) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
     dplyr::arrange(dplyr::desc(as.numeric(ref_len_matched)),
                    dplyr::desc(as.numeric(pct_recovered)),
                    .by_group = TRUE) %>%
@@ -243,7 +186,7 @@ resolve_redundancies <- function(df,
       )
     ) %>%
     dplyr::ungroup() %>%
-    dplyr::select(-Es_Redundante)
+    dplyr::select(-dplyr::any_of("Es_Redundante"))
 }
 
 #' Calcular Deltas Locales de Alineamiento por Locus
@@ -256,6 +199,7 @@ resolve_redundancies <- function(df,
 #' @param score_col Columna de puntaje (por defecto "score").
 #' @param wscore_col Columna de puntaje ponderado (por defecto "wscore").
 #' @param identity_col Columna de porcentaje de identidad (por defecto "pct_identity").
+#' @param sample_col Columna de muestra (por defecto detecta "sample_name" si existe).
 #'
 #' @return Un \code{data.frame} con las nuevas columnas \code{delta_wscore} y \code{delta_pct_identity}.
 #' @export
@@ -263,11 +207,14 @@ calculate_locus_deltas <- function(df,
                                    locus_col = "locus",
                                    score_col = "score",
                                    wscore_col = "wscore",
-                                   identity_col = "pct_identity") {
+                                   identity_col = "pct_identity",
+                                   sample_col = if ("sample_name" %in% colnames(df)) "sample_name" else NULL) {
   stopifnot(is.data.frame(df))
 
+  group_vars <- c(sample_col, locus_col)
+
   df %>%
-    dplyr::group_by(.data[[locus_col]]) %>%
+    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) %>%
     dplyr::arrange(dplyr::desc(.data[[score_col]]), .by_group = TRUE) %>%
     dplyr::mutate(
       delta_wscore = max(.data[[wscore_col]], na.rm = TRUE) - .data[[wscore_col]],
@@ -313,7 +260,7 @@ extract_cnv_matrix <- function(df,
   df_filtrado <- df
   if (verdict_col %in% colnames(df)) {
     df_filtrado <- df_filtrado %>%
-      dplyr::filter(.data[[verdict_col]] == "Ortologo_Valido")
+      dplyr::filter(.data[[verdict_col]] %in% c("Homologo_Valido", "Ortologo_Valido"))
   }
 
   df_cnv_bruto <- df_filtrado %>%
