@@ -240,8 +240,8 @@ Si utiliza **TargetCNV-ML** en su investigación académica o en pipelines de ge
   year         = 2026,
   publisher    = {Zenodo},
   version      = {v1.0.0},
-  doi          = {10.5281/zenodo.XXXXXXX},
-  url          = {https://doi.org/10.5281/zenodo.XXXXXXX}
+  doi          = {10.5281/zenodo.23463987},
+  url          = {https://doi.org/10.5281/zenodo.23463987}
 }
 
 @mastersthesis{benitez_duarte_thesis_2026,
