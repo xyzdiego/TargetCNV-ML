@@ -8,13 +8,13 @@
 [![Pipeline Status](https://img.shields.io/badge/Pipeline-Validated%20(Passing)-brightgreen.svg)](#quickstart-test-suite)
 [![Environment: renv](https://img.shields.io/badge/Environment-renv%20isolated-purple.svg)](https://rstudio.github.io/renv/)
 
-A modular, reproducible, and CLI-driven bioinformatics software package designed to detect **Copy Number Variations (CNV)** and resolve **homologous gene expansions** from Target Capture (Hyb-Seq) high-throughput sequencing data.
+A modular, reproducible, and CLI-driven bioinformatics software package designed to detect **Copy Number Variations (CNV)** and resolve **homologous gene expansions** from Target Capture high-throughput sequencing data.
 
 ---
 
 ## Overview
 
-Target Capture (Hyb-Seq) is a cost-effective next-generation sequencing approach extensively used in phylogenomics, evolutionary genetics, and molecular breeding. However, extracting structural genomic variations such as **Copy Number Variations (CNV)** from target capture assemblies is hindered by two intertwined biological and technical bottlenecks:
+Target Capture is a cost-effective next-generation sequencing approach extensively used in phylogenomics, evolutionary genetics, and molecular breeding. However, extracting structural genomic variations such as **Copy Number Variations (CNV)** from target capture assemblies is hindered by two intertwined biological and technical bottlenecks:
 
 1. **Homologous Asymmetry & Off-Target Cross-Hybridization:** Gene duplication events result in multi-copy gene families with divergent evolutionary trajectories. Assembled contigs frequently map across closely related homologous loci, generating ambiguous hit assignments and elevated False Discovery Rates (FDR).
 2. **Assembly Fragmentation Artifacts:** De novo contig assemblies often break single long genes into multiple shorter fragments. Naive copy-counting heuristics misidentify technical fragmentation as biological gene duplications, leading to severe copy-number inflation.
