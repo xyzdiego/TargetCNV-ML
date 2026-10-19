@@ -8,13 +8,13 @@
 [![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
 [![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
 
-Un paquete de software bioinformático modular, reproducible y ejecutable por línea de comandos (CLI), diseñado para detectar **Variaciones en el Número de Copias (CNV)** y resolver **expansiones de genes homólogos** a partir de datos de secuenciación masiva por Captura de Genes (Target Capture / Hyb-Seq).
+Un paquete de software bioinformático modular, reproducible y ejecutable por línea de comandos (CLI), diseñado para detectar **Variaciones en el Número de Copias (CNV)** y resolver **expansiones de genes homólogos** a partir de datos de secuenciación masiva por Captura de Genes (Target Capture).
 
 ---
 
 ## Visión General
 
-La Captura de Genes (Target Capture / Hyb-Seq) es una técnica de secuenciación de última generación altamente costo-efectiva, ampliamente utilizada en filogenómica, genética evolutiva y mejoramiento molecular. No obstante, la extracción de variaciones genómicas estructurales como las **Variaciones en el Número de Copias (CNV)** a partir de ensamblajes de captura se enfrenta a dos cuellos de botella biológicos y técnicos interconectados:
+La Captura de Genes (Target Capture) es una técnica de secuenciación de última generación altamente costo-efectiva, ampliamente utilizada en filogenómica, genética evolutiva y mejoramiento molecular. No obstante, la extracción de variaciones genómicas estructurales como las **Variaciones en el Número de Copias (CNV)** a partir de ensamblajes de captura se enfrenta a dos cuellos de botella biológicos y técnicos interconectados:
 
 1. **Asimetría Homóloga e Hibridación Cruzada Fuera de Objetivo:** Los eventos de duplicación génica generan familias multigénicas con trayectorias evolutivas divergentes. Los cóntigos ensamblados frecuentemente se alinean sobre loci homólogos estrechamente emparentados, produciendo asignaciones ambiguas y tasas elevadas de falsos descubrimientos (FDR).
 2. **Artefactos de Fragmentación del Ensamblaje:** Los ensamblajes de cóntigos *de novo* a menudo fragmentan genes individuales de gran longitud en múltiples piezas cortas. Las heurísticas ingenuas de conteo de copias confunden esta fragmentación técnica con duplicaciones génicas biológicas, provocando una severa inflación artificial del número de copias.
