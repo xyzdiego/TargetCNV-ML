@@ -42,7 +42,7 @@ results/*
 *.html
 *.knit.md
 *.qmd
-!training_report.qmd
+#!training_report.qmd
 
 # Archivos del SO
 .DS_Store
