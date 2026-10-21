@@ -96,6 +96,10 @@ if (!file.exists(opt$captus_gff)) {
 if (!file.exists(opt$captus_stats)) {
   stop(sprintf("[ERROR] No se encontro el archivo de estadisticas: %s", opt$captus_stats), call. = FALSE)
 }
+# Un diccionario indicado pero inexistente NO debe degradar en silencio a "todo TRUE_POSITIVE"
+if (!is.null(opt$dict_ref) && !file.exists(opt$dict_ref)) {
+  stop(sprintf("[ERROR] No se encontro el diccionario de referencia (--dict_ref): %s", opt$dict_ref), call. = FALSE)
+}
 
 if (!dir.exists(opt$out_dir)) {
   dir.create(opt$out_dir, recursive = TRUE, showWarnings = FALSE)
@@ -138,7 +142,7 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
         dplyr::select(OG_ID, Probe_ID, dplyr::any_of(c("S._torvum", "S_torvum")))
       seq_t <- readxl::read_excel(opt$dict_ref, sheet = "Sequences_Torva")
       dict_ref <- cnv_b %>%
-        dplyr::left_join(seq_t, by = "Probe_ID") %>%
+        dplyr::left_join(seq_t, by = "Probe_ID", relationship = "many-to-many") %>%
         dplyr::filter(!is.na(Contig_ID)) %>%
         dplyr::select(Locus_Benoit = Contig_ID, OG_Benoit = Orthogroup_ID) %>%
         dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
@@ -161,7 +165,8 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
     dict_og_col = col_og
   )
 } else {
-  cat("  [INFO] No se proporciono diccionario; aplicando validacion heuristica de contigs...\n")
+  cat("  [AVISO] No se proporciono diccionario (--dict_ref): todos los hits con solape espacial se marcaran\n")
+  cat("          como TRUE_POSITIVE. Con esta salida NO es posible entrenar (02_train_models.R requiere TP y FP).\n")
   df_clasificacion <- df_cruces %>%
     dplyr::mutate(
       Validacion_Espacial = "TRUE_POSITIVE",
@@ -175,6 +180,15 @@ cat("[4/6] Integrando metricas continuas de alineamiento CAPTUS...\n")
 stats_crudo <- utils::read.delim(opt$captus_stats, header = TRUE, stringsAsFactors = FALSE)
 
 if (!is.null(opt$sample)) {
+  muestras_disponibles <- unique(stats_crudo$sample_name)
+  if (!opt$sample %in% muestras_disponibles) {
+    stop(sprintf(
+      "[ERROR] La muestra '%s' no existe en %s.\n        Muestras disponibles (%d): %s%s",
+      opt$sample, opt$captus_stats, length(muestras_disponibles),
+      paste(utils::head(muestras_disponibles, 10), collapse = ", "),
+      if (length(muestras_disponibles) > 10) ", ..." else ""
+    ), call. = FALSE)
+  }
   stats_crudo <- stats_crudo %>% dplyr::filter(sample_name == opt$sample)
   cat(sprintf("  -> Filtrado para la muestra: %s (%d filas)\n", opt$sample, nrow(stats_crudo)))
 }

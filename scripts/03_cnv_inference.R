@@ -165,6 +165,16 @@ if (length(ml_models) == 0) {
 cat("[2/6] Cargando y preprocesando datos de CAPTUS...\n")
 datos_crudos <- utils::read.delim(opt$input, header = TRUE, stringsAsFactors = FALSE)
 
+columnas_requeridas <- c("sample_name", "marker_type", "ref_name", "hit",
+                         "pct_recovered", "pct_identity", "score", "wscore")
+columnas_faltantes <- setdiff(columnas_requeridas, colnames(datos_crudos))
+if (length(columnas_faltantes) > 0) {
+  stop(sprintf(
+    "[ERROR] El archivo de entrada no tiene el formato de 'captus-extract_stats.tsv'. Faltan columnas: %s",
+    paste(columnas_faltantes, collapse = ", ")
+  ), call. = FALSE)
+}
+
 metricas_numericas <- c("pct_recovered", "pct_identity", "score", "wscore")
 
 df_inferencia <- datos_crudos %>%
@@ -190,6 +200,12 @@ modelos_votantes <- character()
 
 # A. Modelos ML supervisados (Top 4 disponibles)
 top_ml_names <- head(names(ml_models), 4)
+if (length(top_ml_names) < 4) {
+  warning(sprintf(
+    "Solo hay %d modelo(s) ML disponible(s) (se esperan 4): el consenso tendra %d votantes en lugar de 7. Revise --min_votes.",
+    length(top_ml_names), length(top_ml_names) + 3
+  ), call. = FALSE)
+}
 for (mod_name in top_ml_names) {
   col_name <- paste0("Pred_ML_", mod_name)
   pred_raw <- stats::predict(ml_models[[mod_name]], newdata = df_inferencia[, metricas_numericas])

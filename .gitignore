@@ -23,6 +23,8 @@ data/*.xlsx
 models/*.rds
 models/*.RData
 models/**/*.rds
+models/*.tsv
+models/**/*.tsv
 !data/**/.gitkeep
 !models/**/.gitkeep
 
@@ -40,6 +42,7 @@ results/*
 *.html
 *.knit.md
 *.qmd
+!training_report.qmd
 
 # Archivos del SO
 .DS_Store
@@ -47,3 +50,6 @@ Thumbs.db
 
 # Codigo legacy y archivos de archivo local
 archive/
+
+/.quarto/
+**/*.quarto_ipynb

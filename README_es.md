@@ -20,7 +20,7 @@ La Captura de Genes (Target Capture) es una técnica de secuenciación de últim
 2. **Artefactos de Fragmentación del Ensamblaje:** Los ensamblajes de cóntigos *de novo* a menudo fragmentan genes individuales de gran longitud en múltiples piezas cortas. Las heurísticas ingenuas de conteo de copias confunden esta fragmentación técnica con duplicaciones génicas biológicas, provocando una severa inflación artificial del número de copias.
 
 **TargetCNV-ML** resuelve estos desafíos mediante una arquitectura híbrida que integra:
-- **Intersección Genómica Espacial y Rescate en Tándem:** Cruce estricto de coordenadas mediante `GenomicRanges`, validación con diccionario de homología teórica, rescate de vecinos sinténicos y resolución de redundancias basada en métricas de calidad de ensamblaje.
+- **Intersección Genómica Espacial:** Cruce estricto de coordenadas mediante `GenomicRanges`, validación con diccionario de homología teórica y resolución de redundancias basada en métricas de calidad de ensamblaje (flujo fiel a *Workflow_Central_Sin_Rescate*).
 - **Torneo de Aprendizaje Automático Supervisado:** Clasificación multimodelo con submuestreo de clases balanceado (`ElasticNet`, `NaiveBayes`, `SVM`, `Redes Neuronales Artificiales`, `LDA`) junto con puntos de corte univariados basados en el **estadístico J de Youden**.
 - **Sistema de Consenso de 7 Modelos:** Un ensamble ponderado que exige mayoría simple (≥ 4/7 votos favorables) para confirmar homólogos funcionales genuinos, descartando el ruido intergénico o intrónico.
 - **Reglas de Control de Fragmentación del Ensamblaje:** Criterio de umbral de cobertura acumulada en dos niveles (`pct_recovered` ≥ 50.0% y `Σ(pct_recovered)` ≤ 120.0%) que discrimina de forma precisa la fragmentación técnica de las duplicaciones homólogas biológicas reales.
@@ -34,12 +34,12 @@ TargetCNV-ML/
 ├── .Rprofile                    # Activación automática del entorno virtual renv
 ├── .gitignore                   # Exclusión de archivos binarios pesados y datos crudos (estándar Zenodo)
 ├── renv.lock                    # Archivo de bloqueo que registra las versiones exactas de paquetes de R
-├── report_template.qmd          # Plantilla interactiva de reporte en Quarto (crosstalk + plotly + DT)
+├── training_report.qmd          # Plantilla interactiva de reporte en Quarto (renderizada por 02_train_models.R)
 ├── run_test_pipeline.sh         # Script bash para ejecutar el Ejemplo Mínimo Funcional de punta a punta
-├── Workflow_Central.R           # Script monolítico de investigación original (mantenido por trazabilidad)
+├── GUIA_EJECUCION.md            # Guía detallada paso a paso de ejecución de todo el pipeline
 │
 ├── R/                           # Funciones modulares puras de R documentadas con roxygen2
-│   ├── data_processing.R        # Cruce de GFF, rescate en tándem, resolución de redundancias, matriz CNV
+│   ├── data_processing.R        # Cruce de GFF, clasificación con diccionario, resolución de redundancias, matriz CNV
 │   ├── model_evaluation.R       # Matrices de confusión, optimización Youden, consenso de 7 modelos, inferencia
 │   └── plotting.R               # Funciones ggplot2/plotly para densidades, benchmarks, curvas ROC y heatmaps
 │
@@ -109,12 +109,16 @@ chmod +x run_test_pipeline.sh
 
 > [!WARNING]
 > **Modelos Preentrenados y Archivos en Zenodo:**
-> Siguiendo las directrices de ciencia abierta, los genomas de referencia de gran volumen y los modelos serializados (`models/*.rds`) se encuentran archivados en **Zenodo** para evitar el crecimiento excesivo del repositorio Git. Antes de ejecutar el Paso 3 (`03_cnv_inference.R`) sobre conjuntos de datos en producción sin reentrenar:
-> 1. Descargue el paquete de modelos preentrenados desde el DOI de Zenodo: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
-> 2. Extraiga los archivos `.rds` en el directorio local `models/`:
+> Siguiendo las directrices de ciencia abierta, los modelos serializados (`models/*.rds`) se encuentran archivados en **Zenodo** para evitar el crecimiento excesivo del repositorio Git. Antes de ejecutar el Paso 3 (`03_cnv_inference.R`) sobre conjuntos de datos en producción sin reentrenar:
+> 1. Descargue el paquete comprimido de modelos preentrenados (`TargetCNV_Models.zip`, ~380 KB) desde el DOI de Zenodo: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
+> 2. Descomprímalo en la raíz del proyecto (el archivo ya incluye el directorio `models/`):
 >    ```bash
->    tar -xzf targetcnv_pretrained_models.tar.gz -C models/
+>    curl -L -o TargetCNV_Models.zip https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content
+>    unzip -o TargetCNV_Models.zip
 >    ```
+
+> [!TIP]
+> Para consultar una guía completa con cada comando, flag, opción, entrenamiento con datos nuevos y uso de los datos de prueba, consulte [GUIA_EJECUCION.md](GUIA_EJECUCION.md).
 
 El flujo de trabajo se divide en tres módulos ejecutables por CLI:
 
@@ -127,8 +131,8 @@ flowchart LR
     E --> F["03_cnv_inference.R"]
     G["Nuevos Datos CAPTUS"] --> F
     F --> H["cnv_matrix.tsv"]
-    F --> I["report_template.qmd"]
-    I --> J["report.html (Interactivo)"]
+    D --> I["training_report.qmd"]
+    I --> J["reporte_entrenamiento.html"]
 ```
 
 ### Paso 1: Preparación de Datos y Cruces Espaciales
@@ -154,7 +158,6 @@ Calcula las intersecciones espaciales exactas (`GenomicRanges`), contrasta los c
 | `-d` | `--dict_ref` | Archivo | Diccionario de homología de referencia (.xlsx, .tsv, .csv) `[Opcional]` |
 | `-p` | `--sample` | Texto | Nombre de la muestra para filtrar en las estadísticas `[Opcional]` |
 | `-o` | `--out_dir` | Carpeta | Directorio de destino (por defecto: `data/`) |
-| `-m` | `--max_distance`| Entero | Distancia sinténica máxima (número de genes) para rescate en tándem (por defecto: `50`) |
 
 ---
 
@@ -181,7 +184,9 @@ Calcula los umbrales univariados óptimos de Youden, ejecuta una búsqueda en cu
 | `-s` | `--sampling` | Texto | Método de balanceo de clases: `down`, `up`, o `none` (por defecto: `down`) |
 | `-c` | `--cores` | Entero | Número de hilos para ejecución en paralelo (por defecto: `detectCores() - 1`) |
 | `--seed` | `--seed` | Entero | Semilla aleatoria para reproducibilidad estocástica exacta (por defecto: `1234`) |
-| | `--include_hit` | Bandera | Incluir el rango ordinal de hit de CAPTUS como predictor (por defecto: `FALSE`) |
+| | `--include_hit` | Bandera | Incluir el rango ordinal de hit de CAPTUS como predictor (por defecto: `FALSE`; no compatible con Paso 3) |
+| | `--render_report` / `--no_render_report` | Bandera | Compilar (por defecto) u omitir el reporte interactivo HTML |
+| `-r` | `--report_file` | Archivo | Ruta de destino del reporte HTML (por defecto: `reporte_entrenamiento.html`) |
 
 ---
 
@@ -213,17 +218,15 @@ Aplica el **Sistema de Consenso de 7 Modelos** (Regla de Mayoría ≥ 4/7 votos 
 
 ---
 
-### Paso 4: Generación de Reportes Web Interactivos (Quarto)
+### Paso 4: Reporte HTML de Entrenamiento (Quarto)
 
-TargetCNV-ML incluye una plantilla de panel interactivo independiente (`report_template.qmd`) potenciada por `crosstalk`, `plotly` y `DT`. Se ejecuta íntegramente del lado del cliente sin requerir un servidor Shiny:
+El Paso 2 compila automáticamente la plantilla `training_report.qmd` produciendo `reporte_entrenamiento.html` (umbrales de Youden, ensamble heurístico, benchmarks balanceado vs desbalanceado con métricas completas, matrices de confusión, SHAP y densidades de separabilidad). Si desea recompilar el reporte sin reentrenar los modelos:
 
 ```bash
-quarto render report_template.qmd \
-  -P consensus_verdicts:results/consensus_verdicts.tsv \
-  -P cnv_matrix:results/cnv_matrix.tsv \
-  -P cnv_annotated:results/cnv_annotated_sequences.tsv \
-  -P top_loci:30 \
-  --output targetcnv_report.html
+quarto render training_report.qmd \
+  -P models_dir:models \
+  -P data_file:data/data_prepared.rds \
+  --output reporte_entrenamiento.html
 ```
 
 ---

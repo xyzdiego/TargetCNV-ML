@@ -20,7 +20,7 @@ Target Capture is a cost-effective next-generation sequencing approach extensive
 2. **Assembly Fragmentation Artifacts:** De novo contig assemblies often break single long genes into multiple shorter fragments. Naive copy-counting heuristics misidentify technical fragmentation as biological gene duplications, leading to severe copy-number inflation.
 
 **TargetCNV-ML** addresses these challenges through a hybrid architecture combining:
-- **Spatial Genomic Overlaps & Tandem Rescue:** Strict coordinate intersection via `GenomicRanges`, exact homology dictionary validation, syntenic neighbor rescue, and assembly-quality-based redundancy resolution.
+- **Spatial Genomic Overlaps:** Strict coordinate intersection via `GenomicRanges`, exact homology dictionary validation, and assembly-quality-based redundancy resolution (no tandem-rescue step: results follow the *Workflow_Central_Sin_Rescate* research workflow).
 - **Supervised Machine Learning Tournament:** Multi-model classification with class down-sampling (`ElasticNet`, `NaiveBayes`, `SVM`, `Deep Neural Networks`, `LDA`) alongside empirical **Youden's J-statistic** univariate cutoffs.
 - **7-Model Consensus Voting System:** A weighted ensemble requiring simple majority (≥ 4/7 positive votes) to confirm genuine functional homologs while filtering intergenic/intronic noise.
 - **Assembly Fragmentation Control Rules:** A two-tier coverage accumulation threshold rule (`pct_recovered` ≥ 50.0% and `Σ(pct_recovered)` ≤ 120.0%) that accurately separates technical fragmentation from real biological homologs.
@@ -34,12 +34,12 @@ TargetCNV-ML/
 ├── .Rprofile                    # Automatic activation of the renv virtual environment
 ├── .gitignore                   # Excludes heavy binary files and raw data per Zenodo standards
 ├── renv.lock                    # Dependency lockfile recording exact R package versions
-├── report_template.qmd          # Interactive Quarto dashboard (crosstalk + plotly + DT)
+├── training_report.qmd          # Quarto template of the training report (rendered by 02_train_models.R)
 ├── run_test_pipeline.sh         # Bash runner for the end-to-end Minimal Working Example
-├── Workflow_Central.R           # Monolithic legacy research pipeline (kept for provenance)
+├── GUIA_EJECUCION.md            # Step-by-step execution guide in Spanish (all commands, flags, Zenodo, new data)
 │
 ├── R/                           # Pure, modular, roxygen2-documented R library functions
-│   ├── data_processing.R        # GFF intersection, tandem rescue, redundancy resolution, CNV extraction
+│   ├── data_processing.R        # GFF intersection, dictionary classification, redundancy resolution, CNV extraction
 │   ├── model_evaluation.R       # Confusion matrices, Youden optimization, 7-model consensus, inference
 │   └── plotting.R               # ggplot2/plotly wrappers for confusion tiles, densities, benchmarks, heatmaps
 │
@@ -109,12 +109,16 @@ chmod +x run_test_pipeline.sh
 
 > [!WARNING]
 > **Pre-trained Models & Zenodo Assets:**
-> In accordance with open-science standards, large genomic references and serialized models (`models/*.rds`) are archived on **Zenodo** to prevent Git repository bloat. Before running Step 3 (`03_cnv_inference.R`) on production datasets without re-training:
-> 1. Download the pre-trained model bundle from Zenodo DOI: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
-> 2. Extract the `.rds` files into the local `models/` directory:
+> In accordance with open-science standards, serialized models (`models/*.rds`) are archived on **Zenodo** to prevent Git repository bloat. Before running Step 3 (`03_cnv_inference.R`) on production datasets without re-training:
+> 1. Download the pre-trained model bundle (`TargetCNV_Models.zip`, ~380 KB) from Zenodo DOI: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
+> 2. Unzip it at the project root (the archive already contains the `models/` folder):
 >    ```bash
->    tar -xzf targetcnv_pretrained_models.tar.gz -C models/
+>    curl -L -o TargetCNV_Models.zip https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content
+>    unzip -o TargetCNV_Models.zip
 >    ```
+
+> [!TIP]
+> A complete step-by-step guide in Spanish (every command, flag and option, training with new data, MWE and Zenodo models) is available in [GUIA_EJECUCION.md](GUIA_EJECUCION.md).
 
 The pipeline is split into three modular, scriptable CLI entrypoints:
 
@@ -127,8 +131,8 @@ flowchart LR
     E --> F["03_cnv_inference.R"]
     G["New CAPTUS Data"] --> F
     F --> H["cnv_matrix.tsv"]
-    F --> I["report_template.qmd"]
-    I --> J["report.html (Interactive)"]
+    D --> I["training_report.qmd"]
+    I --> J["reporte_entrenamiento.html"]
 ```
 
 ### Step 1: Data Preparation & Spatial Overlaps
@@ -154,7 +158,6 @@ Computes strict spatial overlaps (`GenomicRanges`), matches contigs against the 
 | `-d` | `--dict_ref` | File | Homology reference dictionary (.xlsx, .tsv, .csv) `[Optional]` |
 | `-p` | `--sample` | String | Specific sample name to filter within statistics `[Optional]` |
 | `-o` | `--out_dir` | Dir | Destination directory (default: `data/`) |
-| `-m` | `--max_distance`| Integer| Maximum syntenic distance (genes) for tandem rescue (default: `50`) |
 
 ---
 
@@ -181,7 +184,9 @@ Computes optimal Youden univariate cutoffs, performs grid search for the weighte
 | `-s` | `--sampling` | String | Class re-sampling method: `down`, `up`, or `none` (default: `down`) |
 | `-c` | `--cores` | Integer| Number of parallel execution threads (default: `detectCores() - 1`) |
 | `--seed` | `--seed` | Integer| Random seed for exact stochastic reproducibility (default: `1234`) |
-| | `--include_hit` | Flag | Include the CAPTUS integer hit rank as predictor (default: `FALSE`) |
+| | `--include_hit` | Flag | Include the CAPTUS integer hit rank as predictor (default: `FALSE`; not compatible with Step 3) |
+| | `--render_report` / `--no_render_report` | Flag | Render (default) or skip the HTML training report |
+| `-r` | `--report_file` | File | Output path of the HTML training report (default: `reporte_entrenamiento.html`) |
 
 ---
 
@@ -213,17 +218,15 @@ Applies the **7-Model Consensus System** (Majority Rule ≥ 4/7 positive votes),
 
 ---
 
-### Step 4: Interactive Web Reporting (Quarto)
+### Step 4: Training Report (Quarto)
 
-TargetCNV-ML includes a standalone interactive dashboard template (`report_template.qmd`) powered by `crosstalk`, `plotly`, and `DT`. It runs purely client-side without requiring a Shiny server:
+Step 2 renders `training_report.qmd` automatically into `reporte_entrenamiento.html` (Youden cutoffs, weighted heuristic, balanced vs. unbalanced benchmarks with all metrics, confusion matrices, SHAP and separability plots). To re-render it without re-training:
 
 ```bash
-quarto render report_template.qmd \
-  -P consensus_verdicts:results/consensus_verdicts.tsv \
-  -P cnv_matrix:results/cnv_matrix.tsv \
-  -P cnv_annotated:results/cnv_annotated_sequences.tsv \
-  -P top_loci:30 \
-  --output targetcnv_report.html
+quarto render training_report.qmd \
+  -P models_dir:models \
+  -P data_file:data/data_prepared.rds \
+  --output reporte_entrenamiento.html
 ```
 
 ---

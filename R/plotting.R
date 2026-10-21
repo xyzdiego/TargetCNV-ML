@@ -82,6 +82,8 @@ plot_confusion_matrix <- function(cm_table,
 #' @param metric_cols Vector con los nombres de las columnas continuas a graficar.
 #' @param colors Vector nombrado de colores para las clases (ej. c("TRUE_POSITIVE" = "#27ae60", ...)).
 #' @param title Titulo del grafico.
+#' @param subtitle Subtitulo descriptivo opcional.
+#' @param legend_position Posicion de la leyenda ("right", "bottom", "top", "none"). Por defecto "right".
 #'
 #' @return Un objeto \code{ggplot2}.
 #' @export
@@ -90,7 +92,9 @@ plot_metric_densities <- function(df,
                                   metric_cols,
                                   colors = c("TRUE_POSITIVE" = "#27ae60", "FALSE_POSITIVE" = "#e74c3c",
                                              "TP" = "#27ae60", "FP" = "#e74c3c"),
-                                  title = "Zonas de Solapamiento y Separacion (TP vs FP)") {
+                                  title = "Zonas de Solapamiento y Separacion (TP vs FP)",
+                                  subtitle = "Distribucion de densidad para las 4 metricas continuas",
+                                  legend_position = "right") {
   stopifnot(is.data.frame(df))
   stopifnot(response_col %in% colnames(df))
   stopifnot(all(metric_cols %in% colnames(df)))
@@ -110,11 +114,20 @@ plot_metric_densities <- function(df,
   p <- ggplot2::ggplot(df_long, ggplot2::aes(x = Valor, fill = .data[[response_col]])) +
     ggplot2::geom_density(alpha = 0.6) +
     ggplot2::facet_wrap(~Metrica, scales = "free") +
-    ggplot2::labs(title = title, x = "Valor de la Metrica", y = "Densidad", fill = "Clase") +
-    ggplot2::theme_minimal(base_size = 14) +
+    ggplot2::labs(
+      title = title,
+      subtitle = subtitle,
+      x = "Valor de la Metrica",
+      y = "Densidad",
+      fill = "Clase Real"
+    ) +
+    ggplot2::theme_minimal(base_size = 13) +
     ggplot2::theme(
-      legend.position = "bottom",
-      strip.text = ggplot2::element_text(face = "bold")
+      legend.position = legend_position,
+      strip.text = ggplot2::element_text(face = "bold", size = 11),
+      plot.title = ggplot2::element_text(face = "bold", size = 14),
+      plot.subtitle = ggplot2::element_text(color = "gray30", size = 11),
+      legend.title = ggplot2::element_text(face = "bold")
     )
 
   if (length(sub_colors) == length(resp_levels)) {
@@ -192,20 +205,24 @@ plot_descriptive_distributions <- function(df,
 #'
 #' @param df_benchmark Data frame que contiene la columna \code{Modelo} y metricas numericas.
 #' @param model_col Columna que identifica cada estrategia/modelo (por defecto "Modelo").
-#' @param metric_cols Metricas a graficar (por defecto Exactitud, Sensibilidad, Especificidad, Precision, FDR, F1_Score).
+#' @param metric_cols Metricas a graficar (por defecto Exactitud, Sensibilidad, Especificidad, Precision, FDR, F1_Score, ROC_AUC).
 #' @param model_order Vector opcional con el orden deseado de los modelos.
 #' @param title Titulo del benchmark.
 #' @param subtitle Subtitulo explicativo.
+#' @param caption Texto aclaratorio al pie.
+#' @param legend_position Posicion de la leyenda ("right", "bottom", "top", "none").
 #'
 #' @return Un objeto \code{ggplot2}.
 #' @export
 plot_benchmark <- function(df_benchmark,
                            model_col = "Modelo",
                            metric_cols = c("Exactitud", "Sensibilidad", "Especificidad",
-                                           "Precision", "FDR", "F1_Score"),
+                                           "Precision", "FDR", "F1_Score", "ROC_AUC"),
                            model_order = NULL,
                            title = "Benchmark de Estrategias Evaluadas",
-                           subtitle = NULL) {
+                           subtitle = NULL,
+                           caption = NULL,
+                           legend_position = "right") {
   stopifnot(is.data.frame(df_benchmark))
   stopifnot(model_col %in% colnames(df_benchmark))
 
@@ -223,23 +240,80 @@ plot_benchmark <- function(df_benchmark,
   if (!is.null(model_order)) {
     df_plot[[model_col]] <- factor(df_plot[[model_col]], levels = rev(model_order))
   } else {
-    df_plot[[model_col]] <- stats::reorder(factor(df_plot[[model_col]]), df_plot$Valor)
+    df_plot[[model_col]] <- stats::reorder(factor(df_plot[[model_col]]), df_plot$Valor,
+                                           FUN = function(x) mean(x, na.rm = TRUE))
   }
 
-  ggplot2::ggplot(df_plot, ggplot2::aes(x = .data[[model_col]], y = Valor, fill = Metrica)) +
-    ggplot2::geom_bar(stat = "identity", position = ggplot2::position_dodge()) +
+  p <- ggplot2::ggplot(df_plot, ggplot2::aes(x = .data[[model_col]], y = Valor, fill = Metrica)) +
+    ggplot2::geom_bar(stat = "identity", position = ggplot2::position_dodge(width = 0.8), width = 0.7) +
     ggplot2::coord_flip() +
     ggplot2::labs(
       title = title,
       subtitle = subtitle,
-      x = "Estrategia Evaluada",
+      caption = caption,
+      x = "Modelo / Estrategia",
       y = "Puntaje (0 a 1)"
     ) +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::theme(
-      legend.position = "bottom",
-      plot.title = ggplot2::element_text(face = "bold")
+      legend.position = legend_position,
+      plot.title = ggplot2::element_text(face = "bold"),
+      plot.caption = ggplot2::element_text(face = "bold.italic", size = 10, color = "gray35")
     )
+
+  return(p)
+}
+
+#' Ranking de Modelos por ROC Promedio (Grafico de la Tesis)
+#'
+#' Genera un grafico de barras horizontales unicolor o por modelo para ordenar
+#' algoritmos segun su ROC-AUC en validacion cruzada.
+#'
+#' @param df_ranking Data frame con columnas Modelo y Valor (o ROC).
+#' @param model_col Columna del modelo (por defecto "Modelo").
+#' @param score_col Columna con el valor de ROC (por defecto "ROC_AUC" o "ROC").
+#' @param title Titulo del grafico.
+#' @param subtitle Subtitulo opcional.
+#' @param caption Texto al pie (ej. Mejor modelo...).
+#'
+#' @return Un objeto \code{ggplot2}.
+#' @export
+plot_model_ranking <- function(df_ranking,
+                               model_col = "Modelo",
+                               score_col = "ROC_AUC",
+                               title = "Ranking de Modelos (Datos Desbalanceados)",
+                               subtitle = "Promedio del Area Bajo la Curva (ROC) en Validacion Cruzada",
+                               caption = NULL) {
+  stopifnot(is.data.frame(df_ranking))
+  stopifnot(model_col %in% colnames(df_ranking))
+  if (!score_col %in% colnames(df_ranking)) {
+    if ("ROC" %in% colnames(df_ranking)) score_col <- "ROC" else score_col <- colnames(df_ranking)[2]
+  }
+
+  df_plot <- df_ranking %>%
+    dplyr::mutate(
+      Score_Num = as.numeric(.data[[score_col]]),
+      Modelo_Ord = stats::reorder(.data[[model_col]], Score_Num)
+    )
+
+  p <- ggplot2::ggplot(df_plot, ggplot2::aes(x = Modelo_Ord, y = Score_Num, fill = .data[[model_col]])) +
+    ggplot2::geom_col(color = "black", alpha = 0.85, width = 0.65) +
+    ggplot2::coord_flip() +
+    ggplot2::labs(
+      title = title,
+      subtitle = subtitle,
+      caption = caption,
+      x = "Modelo Evaluado",
+      y = "Valor ROC Promedio"
+    ) +
+    ggplot2::theme_bw(base_size = 12) +
+    ggplot2::theme(
+      legend.position = "none",
+      plot.title = ggplot2::element_text(face = "bold"),
+      plot.caption = ggplot2::element_text(face = "bold.italic", size = 11, color = "#c0392b")
+    )
+
+  return(p)
 }
 
 #' Curvas ROC Comparativas

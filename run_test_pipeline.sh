@@ -20,6 +20,20 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Opciones: por defecto el MWE NO modifica models/, results/ ni reporte_entrenamiento.html de la raiz,
+# para no sobrescribir modelos/resultados reales ya generados con datos de produccion.
+SYNC_ROOT=0
+for arg in "$@"; do
+  case "$arg" in
+    --sync-root) SYNC_ROOT=1 ;;
+    -h|--help)
+      echo "Uso: ./run_test_pipeline.sh [--sync-root]"
+      echo "  --sync-root  Copia ademas los artefactos del MWE a models/ y results/ de la raiz (SOBRESCRIBE su contenido)."
+      exit 0 ;;
+    *) echo "Opcion desconocida: $arg (use --help)"; exit 1 ;;
+  esac
+done
+
 echo -e "\n${BOLD}${CYAN}=================================================================${NC}"
 echo -e "${BOLD}${CYAN}       TargetCNV-ML : Minimal Working Example (Test Suite)       ${NC}"
 echo -e "${BOLD}${CYAN}=================================================================${NC}\n"
@@ -62,7 +76,8 @@ echo -e "${BOLD}${BLUE}[PASO 2/3] Ejecutando 02_train_models.R...${NC}"
   --cv_folds 3 \
   --sampling down \
   --seed 42 \
-  --cores 2
+  --cores 2 \
+  --report_file "$TEST_DIR/reporte_entrenamiento_test.html"
 
 if [ -f "$MODELS_DIR/heuristic_model.rds" ] && [ -f "$MODELS_DIR/youden_thresholds.rds" ]; then
   echo -e "${GREEN}✓ Paso 2 completado exitosamente.${NC}\n"
@@ -86,10 +101,13 @@ echo -e "${BOLD}${BLUE}[PASO 3/3] Ejecutando 03_cnv_inference.R...${NC}"
 
 if [ -f "$RESULTS_DIR/cnv_matrix.tsv" ]; then
   echo -e "${GREEN}✓ Paso 3 completado exitosamente.${NC}\n"
-  # Sincronizar artefactos finales a results/ y models/ en la raiz para compatibilidad directa con Quarto
-  mkdir -p results models
-  cp -f "$RESULTS_DIR"/* results/ 2>/dev/null || true
-  cp -f "$MODELS_DIR"/* models/ 2>/dev/null || true
+  if [ "$SYNC_ROOT" -eq 1 ]; then
+    # Opcional: sincronizar artefactos a results/ y models/ de la raiz (SOBRESCRIBE su contenido)
+    mkdir -p results models
+    cp -f "$RESULTS_DIR"/* results/ 2>/dev/null || true
+    cp -f "$MODELS_DIR"/* models/ 2>/dev/null || true
+    echo -e "${YELLOW}[--sync-root] Artefactos del MWE copiados a models/ y results/ de la raiz.${NC}\n"
+  fi
 else
   echo -e "${RED}✗ Error: No se genero cnv_matrix.tsv${NC}"
   exit 1

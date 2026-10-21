@@ -69,6 +69,117 @@ evaluate_confusion_matrix <- function(data,
   )
 }
 
+#' Esquema Canonico de Columnas del Benchmark
+#'
+#' Orden unico de columnas que deben presentar TODAS las tablas de benchmark
+#' (escenario balanceado, desbalanceado, cortes Youden y ensamble heuristico).
+#'
+#' @format Vectores de caracteres.
+#' @export
+BENCHMARK_METRIC_COLS <- c(
+  "Exactitud", "Exactitud_Balanceada", "Sensibilidad", "Especificidad",
+  "Precision", "VPN", "FDR", "F1_Score", "MCC", "Kappa", "ROC_AUC"
+)
+BENCHMARK_COUNT_COLS <- c("TP", "FP", "FN", "TN")
+BENCHMARK_COLS <- c("Modelo", BENCHMARK_METRIC_COLS, BENCHMARK_COUNT_COLS)
+
+#' Calcular el Conjunto Completo de Metricas de Clasificacion Binaria
+#'
+#' Funcion unica y canonica para construir una fila de benchmark. Calcula desde la
+#' matriz de confusion (conteos TP/FP/FN/TN) la Exactitud, Exactitud Balanceada,
+#' Sensibilidad, Especificidad, Precision (VPP), VPN, FDR, F1-Score, MCC y Kappa de
+#' Cohen; y, si se entrega un puntaje continuo, el ROC-AUC (direccion fija: a mayor
+#' puntaje, mayor probabilidad de la clase positiva).
+#'
+#' Convenciones para casos degenerados: si el modelo no predice ningun positivo,
+#' Precision y FDR quedan en \code{NA} (indefinidos), mientras que F1 y MCC valen 0.
+#'
+#' @param pred Vector (factor o caracter) con la clase predicha.
+#' @param obs Vector (factor o caracter) con la clase real (Ground Truth).
+#' @param score Vector numerico opcional (probabilidad o puntaje) para calcular el ROC-AUC.
+#' @param positive_class Etiqueta de la clase positiva (por defecto \code{"TP"}).
+#' @param model_name Nombre del modelo/estrategia a registrar.
+#'
+#' @return \code{data.frame} de una fila con las columnas \code{BENCHMARK_COLS}.
+#' @export
+compute_classification_metrics <- function(pred,
+                                           obs,
+                                           score = NULL,
+                                           positive_class = "TP",
+                                           model_name = "Modelo") {
+  pred_chr <- as.character(pred)
+  obs_chr  <- as.character(obs)
+  stopifnot(length(pred_chr) == length(obs_chr))
+  keep <- !is.na(pred_chr) & !is.na(obs_chr)
+  if (!is.null(score)) {
+    stopifnot(length(score) == length(obs_chr))
+    keep <- keep & !is.na(score)
+    score <- as.numeric(score)[keep]
+  }
+  pred_chr <- pred_chr[keep]
+  obs_chr  <- obs_chr[keep]
+
+  is_pos_pred <- pred_chr == positive_class
+  is_pos_obs  <- obs_chr == positive_class
+
+  tp <- sum(is_pos_pred & is_pos_obs)
+  fp <- sum(is_pos_pred & !is_pos_obs)
+  fn <- sum(!is_pos_pred & is_pos_obs)
+  tn <- sum(!is_pos_pred & !is_pos_obs)
+  n  <- tp + fp + fn + tn
+
+  safe_div <- function(a, b) if (b > 0) a / b else NA_real_
+
+  sens <- safe_div(tp, tp + fn)
+  spec <- safe_div(tn, tn + fp)
+  prec <- safe_div(tp, tp + fp)
+  npv  <- safe_div(tn, tn + fn)
+  acc  <- safe_div(tp + tn, n)
+  bacc <- mean(c(sens, spec), na.rm = TRUE)
+  fdr  <- if (is.na(prec)) NA_real_ else 1 - prec
+  f1   <- if ((2 * tp + fp + fn) > 0) 2 * tp / (2 * tp + fp + fn) else 0
+
+  mcc_den <- sqrt(as.numeric(tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+  mcc <- if (mcc_den > 0) (as.numeric(tp) * tn - as.numeric(fp) * fn) / mcc_den else 0
+
+  p_obs <- acc
+  p_exp <- if (n > 0) (as.numeric(tp + fp) * (tp + fn) + as.numeric(fn + tn) * (fp + tn)) / n^2 else NA_real_
+  kappa <- if (!is.na(p_exp) && p_exp < 1) (p_obs - p_exp) / (1 - p_exp) else 0
+
+  auc <- NA_real_
+  neg_class <- setdiff(unique(obs_chr), positive_class)[1]
+  if (!is.null(score) && any(is_pos_obs) && !is.na(neg_class)) {
+    roc_obj <- tryCatch(
+      suppressMessages(pROC::roc(
+        response = obs_chr, predictor = score,
+        levels = c(neg_class, positive_class), direction = "<", quiet = TRUE
+      )),
+      error = function(e) NULL
+    )
+    if (!is.null(roc_obj)) auc <- as.numeric(roc_obj$auc)
+  }
+
+  data.frame(
+    Modelo = model_name,
+    Exactitud = acc,
+    Exactitud_Balanceada = bacc,
+    Sensibilidad = sens,
+    Especificidad = spec,
+    Precision = prec,
+    VPN = npv,
+    FDR = fdr,
+    F1_Score = f1,
+    MCC = mcc,
+    Kappa = kappa,
+    ROC_AUC = auc,
+    TP = as.integer(tp),
+    FP = as.integer(fp),
+    FN = as.integer(fn),
+    TN = as.integer(tn),
+    stringsAsFactors = FALSE
+  )[, BENCHMARK_COLS]
+}
+
 #' Calcular Umbral Optimo segun Indice de Youden
 #'
 #' Determina el punto de corte continuo optimo para discriminar entre verdaderos
@@ -158,27 +269,15 @@ evaluate_youden_predictors <- function(df,
     voto_bin <- ifelse(df_clean[[var]] >= umbral, 1, 0)
     df_votos[[var]] <- voto_bin
 
-    prediccion <- factor(
-      ifelse(voto_bin == 1, positive_class, setdiff(unique(df_clean[[response_col]]), positive_class)[1]),
-      levels = levels(factor(df_clean[[response_col]]))
-    )
+    neg_class <- setdiff(unique(as.character(df_clean[[response_col]])), positive_class)[1]
+    prediccion <- ifelse(voto_bin == 1, positive_class, neg_class)
 
-    cm <- caret::confusionMatrix(
-      data = prediccion,
-      reference = factor(df_clean[[response_col]]),
-      mode = "everything"
-    )
-
-    prec <- as.numeric(cm$byClass["Precision"])
-    benchmark_list[[var]] <- data.frame(
-      Modelo = paste("Corte:", var),
-      Exactitud = as.numeric(cm$overall["Accuracy"]),
-      Sensibilidad = as.numeric(cm$byClass["Sensitivity"]),
-      Especificidad = as.numeric(cm$byClass["Specificity"]),
-      Precision = prec,
-      FDR = 1 - prec,
-      F1_Score = as.numeric(cm$byClass["F1"]),
-      stringsAsFactors = FALSE
+    benchmark_list[[var]] <- compute_classification_metrics(
+      pred = prediccion,
+      obs = df_clean[[response_col]],
+      score = df_clean[[var]],
+      positive_class = positive_class,
+      model_name = paste("Corte:", var)
     )
   }
 
@@ -250,18 +349,12 @@ optimize_weighted_heuristic <- function(df_votes,
     levels = levels(resp_fac)
   )
 
-  cm_comb <- caret::confusionMatrix(data = pred_comb, reference = resp_fac, mode = "everything")
-  prec_comb <- as.numeric(cm_comb$byClass["Precision"])
-
-  benchmark_row <- data.frame(
-    Modelo = "Modelo Combinado (Heuristico)",
-    Exactitud = as.numeric(cm_comb$overall["Accuracy"]),
-    Sensibilidad = as.numeric(cm_comb$byClass["Sensitivity"]),
-    Especificidad = as.numeric(cm_comb$byClass["Specificity"]),
-    Precision = prec_comb,
-    FDR = 1 - prec_comb,
-    F1_Score = as.numeric(cm_comb$byClass["F1"]),
-    stringsAsFactors = FALSE
+  benchmark_row <- compute_classification_metrics(
+    pred = pred_comb,
+    obs = resp_fac,
+    score = mejor_puntaje,
+    positive_class = positive_class,
+    model_name = "Modelo Combinado (Heuristico)"
   )
 
   list(
