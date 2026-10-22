@@ -2,8 +2,10 @@
 
 # ==============================================================================
 # TargetCNV-ML Pipeline
-# Script 01: Data Preparation and Spatial Filtering
+# Script 01: Data Preparation, Spatial Intersection & Ground Truth Classification
 # ==============================================================================
+
+t_start <- Sys.time()
 
 suppressPackageStartupMessages({
   library(optparse)
@@ -33,7 +35,7 @@ option_list <- list(
     c("-g", "--gff_ref"),
     type = "character",
     default = NULL,
-    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio]",
+    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio en modo overlap]",
     metavar = "FILE"
   ),
   make_option(
@@ -61,7 +63,14 @@ option_list <- list(
     c("-p", "--sample"),
     type = "character",
     default = NULL,
-    help = "Nombre exacto de la muestra para filtrar en captus_stats (ej. Storvum) [Opcional]",
+    help = "Nombre exacto de la muestra para filtrar en captus_stats (ej. Storvum, Scitrullifolium, S_stella) [Opcional]",
+    metavar = "STR"
+  ),
+  make_option(
+    c("--target_mode"),
+    type = "character",
+    default = "overlap",
+    help = "Modo de mapeo espacial: 'overlap' (GenomicRanges con --gff_ref) o 'target_attr' (atributo Target del GFF de CAPTUS para genomas fragmentados) [Por defecto: overlap]",
     metavar = "STR"
   ),
   make_option(
@@ -76,18 +85,24 @@ option_list <- list(
 opt_parser <- OptionParser(
   usage = "Uso: %prog [opciones]",
   option_list = option_list,
-  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales con GFF, resuelve redundancias y genera dataset de ML."
+  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales con GFF, resuelve redundancias y genera dataset de entrenamiento/transferencia."
 )
 
 opt <- parse_args(opt_parser)
 
 # Validacion de argumentos requeridos
-if (is.null(opt$gff_ref) || is.null(opt$captus_gff) || is.null(opt$captus_stats)) {
+if (is.null(opt$captus_gff) || is.null(opt$captus_stats)) {
   print_help(opt_parser)
-  stop("[ERROR] Debe especificar --gff_ref, --captus_gff y --captus_stats.", call. = FALSE)
+  stop("[ERROR] Debe especificar --captus_gff y --captus_stats.", call. = FALSE)
 }
-
-if (!file.exists(opt$gff_ref)) {
+if (!opt$target_mode %in% c("overlap", "target_attr")) {
+  stop(sprintf("[ERROR] --target_mode debe ser 'overlap' o 'target_attr' (recibido: '%s').", opt$target_mode), call. = FALSE)
+}
+if (opt$target_mode == "overlap" && is.null(opt$gff_ref)) {
+  print_help(opt_parser)
+  stop("[ERROR] En modo 'overlap' debe especificar --gff_ref (o usar --target_mode target_attr).", call. = FALSE)
+}
+if (!is.null(opt$gff_ref) && !file.exists(opt$gff_ref)) {
   stop(sprintf("[ERROR] No se encontro el archivo GFF de referencia: %s", opt$gff_ref), call. = FALSE)
 }
 if (!file.exists(opt$captus_gff)) {
@@ -105,58 +120,56 @@ if (!dir.exists(opt$out_dir)) {
   dir.create(opt$out_dir, recursive = TRUE, showWarnings = FALSE)
 }
 
-cat("=================================================================\n")
+cat("========================================================\n")
 cat(" TargetCNV-ML: Modulo 01 - Preparacion de Datos y Cruce Espacial \n")
-cat("=================================================================\n")
-cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
+cat("========================================================\n")
+cat(sprintf("Modo de Cruce Espacial   : %s\n", opt$target_mode))
+if (!is.null(opt$gff_ref)) cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
 cat(sprintf("CAPTUS Contigs GFF       : %s\n", opt$captus_gff))
 cat(sprintf("Estadisticas CAPTUS      : %s\n", opt$captus_stats))
+if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario Ortologico   : %s\n", opt$dict_ref))
+if (!is.null(opt$sample))   cat(sprintf("Filtro de Muestra        : %s\n", opt$sample))
 cat(sprintf("Directorio de Salida     : %s\n", opt$out_dir))
-cat("-----------------------------------------------------------------\n")
+cat("--------------------------------------------------------\n")
 
 # 1. Carga de anotaciones GFF
 cat("[1/6] Cargando y filtrando anotaciones GFF...\n")
 suppressPackageStartupMessages(library(rtracklayer))
 
-gff_ref_raw <- rtracklayer::import(opt$gff_ref)
-genes_ref <- filter_gff_features(gff_ref_raw, feature_type = "gene")
-cat(sprintf("  -> Genes de referencia cargados: %d\n", length(genes_ref)))
-
 gff_captus_raw <- rtracklayer::import(opt$captus_gff)
 gff_captus <- filter_gff_features(gff_captus_raw, feature_type = "protein_match:NUC")
-cat(sprintf("  -> Marcadores funcionales (NUC) CAPTUS: %d\n", length(gff_captus)))
+cat(sprintf("   -> Marcadores funcionales (NUC) CAPTUS: %d\n", length(gff_captus)))
 
-# 2. Interseccion espacial
-cat("[2/6] Ejecutando interseccion espacial estricta (GenomicRanges)...\n")
-df_cruces <- find_spatial_overlaps(query_gff = gff_captus, subject_gff = genes_ref, ignore_strand = FALSE)
-cat(sprintf("  -> Hits espaciales encontrados: %d\n", nrow(df_cruces)))
+# 2. Interseccion espacial o extraccion desde atributo Target
+if (opt$target_mode == "overlap") {
+  gff_ref_raw <- rtracklayer::import(opt$gff_ref)
+  genes_ref <- filter_gff_features(gff_ref_raw, feature_type = "gene")
+  cat(sprintf("   -> Genes de referencia cargados: %d\n", length(genes_ref)))
+
+  cat("[2/6] Ejecutando interseccion espacial estricta (GenomicRanges)...\n")
+  df_cruces <- find_spatial_overlaps(query_gff = gff_captus, subject_gff = genes_ref, ignore_strand = FALSE)
+  cat(sprintf("   -> Hits espaciales encontrados: %d\n", nrow(df_cruces)))
+} else {
+  cat("[2/6] Extrayendo loci de referencia desde el atributo Target del GFF de CAPTUS...\n")
+  df_cruces <- extract_target_loci_from_gff(gff_captus)
+  cat(sprintf("   -> Hits unicos extraidos desde Target: %d\n", nrow(df_cruces)))
+}
 
 # 3. Clasificacion con diccionario de referencia (si esta disponible)
 cat("[3/6] Evaluando correspondencia con diccionario de referencia...\n")
 if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
-  if (grepl("\\.xlsx$", opt$dict_ref, ignore.case = TRUE)) {
-    suppressPackageStartupMessages(library(readxl))
-    sheets <- readxl::excel_sheets(opt$dict_ref)
-    if ("CNV_Benoit" %in% sheets && "Sequences_Torva" %in% sheets) {
-      cnv_b <- readxl::read_excel(opt$dict_ref, sheet = "CNV_Benoit") %>%
-        dplyr::select(OG_ID, Probe_ID, dplyr::any_of(c("S._torvum", "S_torvum")))
-      seq_t <- readxl::read_excel(opt$dict_ref, sheet = "Sequences_Torva")
-      dict_ref <- cnv_b %>%
-        dplyr::left_join(seq_t, by = "Probe_ID", relationship = "many-to-many") %>%
-        dplyr::filter(!is.na(Contig_ID)) %>%
-        dplyr::select(Locus_Benoit = Contig_ID, OG_Benoit = Orthogroup_ID) %>%
-        dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
-        dplyr::distinct()
-    } else {
-      dict_ref <- readxl::read_excel(opt$dict_ref)
-    }
-  } else {
-    dict_ref <- utils::read.delim(opt$dict_ref, stringsAsFactors = FALSE)
-  }
-  
+  dict_ref <- load_reference_dictionary(opt$dict_ref, species = opt$sample)
+
   col_locus <- intersect(c("Locus_Benoit", "Locus_Ref_Limpio", "Locus", "gene_id"), colnames(dict_ref))[1]
   col_og    <- intersect(c("OG_Benoit", "OG_ID", "Orthogroup_ID", "OG"), colnames(dict_ref))[1]
-  
+
+  if (is.na(col_locus) || is.na(col_og)) {
+    stop(sprintf(
+      "[ERROR] El diccionario %s no contiene columnas reconocibles de Locus y Ortogrupo. Columnas encontradas: %s",
+      opt$dict_ref, paste(colnames(dict_ref), collapse = ", ")
+    ), call. = FALSE)
+  }
+
   df_clasificacion <- classify_spatial_hits(
     df_cruces = df_cruces,
     dict_ref = dict_ref,
@@ -169,6 +182,11 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
   cat("          como TRUE_POSITIVE. Con esta salida NO es posible entrenar (02_train_models.R requiere TP y FP).\n")
   df_clasificacion <- df_cruces %>%
     dplyr::mutate(
+      ID_Captus = dplyr::if_else(
+        stringr::str_detect(ID_Captus, "__[0-9]+$"),
+        ID_Captus,
+        paste0(ID_Captus, "__00")
+      ),
       Validacion_Espacial = "TRUE_POSITIVE",
       Doble_Control_Biologico = "1_Hit_Espacial_Valido"
     ) %>%
@@ -183,14 +201,14 @@ if (!is.null(opt$sample)) {
   muestras_disponibles <- unique(stats_crudo$sample_name)
   if (!opt$sample %in% muestras_disponibles) {
     stop(sprintf(
-      "[ERROR] La muestra '%s' no existe en %s.\n        Muestras disponibles (%d): %s%s",
+      "[ERROR] La muestra '%s' no existe en %s.\n          Muestras disponibles (%d): %s%s",
       opt$sample, opt$captus_stats, length(muestras_disponibles),
       paste(utils::head(muestras_disponibles, 10), collapse = ", "),
       if (length(muestras_disponibles) > 10) ", ..." else ""
     ), call. = FALSE)
   }
   stats_crudo <- stats_crudo %>% dplyr::filter(sample_name == opt$sample)
-  cat(sprintf("  -> Filtrado para la muestra: %s (%d filas)\n", opt$sample, nrow(stats_crudo)))
+  cat(sprintf("   -> Filtrado para la muestra: %s (%d filas)\n", opt$sample, nrow(stats_crudo)))
 }
 
 stats_limpio <- clean_captus_ids(stats_crudo, ref_col = "ref_name", hit_col = "hit")
@@ -232,13 +250,19 @@ out_rds <- file.path(opt$out_dir, "data_prepared.rds")
 utils::write.table(stats_preparado, file = out_tsv, sep = "\t", row.names = FALSE, quote = FALSE)
 saveRDS(stats_preparado, file = out_rds)
 
-cat("-----------------------------------------------------------------\n")
+elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
+
+cat("--------------------------------------------------------\n")
 cat(" RESUMEN FINAL DE PREPARACION\n")
-cat("-----------------------------------------------------------------\n")
+cat("--------------------------------------------------------\n")
 cat(sprintf("Total secuencias analizadas (NUC) : %d\n", nrow(stats_preparado)))
-cat(sprintf("Verdaderos Positivos (TP)        : %d\n", sum(stats_preparado$Validacion_Espacial == "TRUE_POSITIVE")))
-cat(sprintf("Falsos Positivos & Redundantes   : %d\n", sum(stats_preparado$Validacion_Espacial == "FALSE_POSITIVE")))
-cat(sprintf("Archivo TSV generado             : %s\n", out_tsv))
-cat(sprintf("Archivo RDS generado             : %s\n", out_rds))
-cat("=================================================================\n")
+cat(sprintf("Verdaderos Positivos (TP)         : %d\n", sum(stats_preparado$Validacion_Espacial == "TRUE_POSITIVE")))
+cat(sprintf("Falsos Positivos & Redundantes    : %d\n", sum(stats_preparado$Validacion_Espacial == "FALSE_POSITIVE")))
+cat("\nDesglose de Origen Biologico (Doble Control):\n")
+print(table(stats_preparado$Doble_Control_Biologico))
+cat("--------------------------------------------------------\n")
+cat(sprintf("Archivo TSV generado              : %s\n", out_tsv))
+cat(sprintf("Archivo RDS generado              : %s\n", out_rds))
+cat(sprintf("Tiempo de ejecucion               : %.2f s\n", elapsed_sec))
+cat("========================================================\n")
 cat("[OK] Proceso completado con exito.\n")
