@@ -1,107 +1,143 @@
-# TargetCNV-ML: Copy Number Variation Detection from Target Capture Data
+# TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture
 
-**Languages / Idiomas:** [English (README.md)](README.md) | [Español (README\_es.md)](https://www.google.com/search?q=README_es.md)  
-**Execution Guides:** [Execution Guide (EXECUTION\_GUIDE.md)](https://www.google.com/search?q=EXECUTION_GUIDE.md) | [Guía de Ejecución (GUIA\_EJECUCION.md)](https://www.google.com/search?q=GUIA_EJECUCION.md)
+[🇪🇸 Versión en Español](README_es.md)
 
-[](https://doi.org/10.5281/zenodo.23463987)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
+[![R Version](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Pipeline Status](https://img.shields.io/badge/Pipeline-Validated%20(Passing)-brightgreen.svg)](#quickstart-test-suite)
+[![Environment: renv](https://img.shields.io/badge/Environment-renv%20isolated-purple.svg)](https://rstudio.github.io/renv/)
 
+A modular, reproducible, and CLI-driven bioinformatics software package designed to detect **Copy Number Variations (CNV)** and resolve **homologous gene expansions** from Target Capture high-throughput sequencing data.
 
+---
 
+## Overview
 
+Target Capture is a cost-effective next-generation sequencing approach extensively used in phylogenomics, evolutionary genetics, and molecular breeding. However, extracting structural genomic variations such as **Copy Number Variations (CNV)** from target capture assemblies is hindered by two intertwined biological and technical bottlenecks:
 
-**TargetCNV-ML** is a command-line (CLI) bioinformatics pipeline written in R and Bash to estimate **Copy Number Variations (CNV)** and identify **gene family expansions** from target capture (*Hyb-Seq* / *Target Enrichment*) sequencing assemblies.
+1. **Homologous Asymmetry & Off-Target Cross-Hybridization:** Gene duplication events result in multi-copy gene families with divergent evolutionary trajectories. Assembled contigs frequently map across closely related homologous loci, generating ambiguous hit assignments and elevated False Discovery Rates (FDR).
+2. **Assembly Fragmentation Artifacts:** De novo contig assemblies often break single long genes into multiple shorter fragments. Naive copy-counting heuristics misidentify technical fragmentation as biological gene duplications, leading to severe copy-number inflation.
 
-## Why TargetCNV-ML?
+**TargetCNV-ML** addresses these challenges through a hybrid architecture combining:
+- **Spatial Genomic Overlaps:** Strict coordinate intersection via `GenomicRanges`, exact homology dictionary validation, and assembly-quality-based redundancy resolution (no tandem-rescue step: results follow the *Workflow_Central_Sin_Rescate* research workflow).
+- **Supervised Machine Learning Tournament:** Multi-model classification with class down-sampling (`ElasticNet`, `NaiveBayes`, `SVM`, `Deep Neural Networks`, `LDA`) alongside empirical **Youden's J-statistic** univariate cutoffs.
+- **7-Model Consensus Voting System:** A weighted ensemble requiring simple majority (≥ 4/7 positive votes) to confirm genuine functional homologs while filtering intergenic/intronic noise.
+- **Assembly Fragmentation Control Rules:** A two-tier coverage accumulation threshold rule (`pct_recovered` ≥ 50.0% and `Σ(pct_recovered)` ≤ 120.0%) that accurately separates technical fragmentation from real biological homologs.
 
-Target capture is widely used in phylogenomics, evolutionary biology, and plant breeding because it sequences specific regions of interest at a fraction of whole-genome sequencing costs. However, counting gene copies from *de novo* target capture assemblies presents two practical problems:
-
-1. **Off-target and cross-homolog alignments:** Capture probes can hybridize with closely related paralogs, pseudogenes, or flanking non-coding regions. As a result, assembled contigs often align to multiple similar loci, increasing false positives.
-2. **Assembly fragmentation:** *De novo* assemblers frequently break a single long gene into two or more short contigs. Simple contig counting mistakes these fragments for extra gene copies.
-
-**TargetCNV-ML** addresses both issues in three steps:
-- **Genomic coordinate matching (`GenomicRanges`):** Compares assembled contigs (`protein_match:NUC`) against a reference genome annotation (`.gff3`) and a reference orthology table to label true gene hits (`TRUE_POSITIVE`) versus off-target or redundant hits (`FALSE_POSITIVE`).
-- **7-Model Consensus Classification:** Combines **4 supervised machine learning models** (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), **2 univariate Youden index cutoffs** (`pct_recovered`, `pct_identity`), and **1 weighted heuristic score**. A sequence is accepted as a valid homolog if at least 4 of the 7 methods vote positive.
-- **Coverage-based fragmentation filter:** Separates complete additional gene copies (`Paralogo_Confirmado`, individual coverage $\ge 50\%$) from fragmented contigs of the same gene (`Fragmentacion_de_Ensamblaje`, individual coverage $< 50\%$ and cumulative locus coverage $\le 120\%$).
+---
 
 ## Repository Structure
 
 ```text
 TargetCNV-ML/
-├── targetcnv.sh               # Main Bash helper script to run workflows in one line
-├── run_test_pipeline.sh       # Test script using the small synthetic dataset (MWE)
-├── training_report.qmd        # Quarto template for the interactive HTML training report
-├── README.md                  # Main overview in English
-├── README_es.md               # Main overview in Spanish
-├── EXECUTION_GUIDE.md         # Execution Guide in English
-├── GUIA_EJECUCION.md          # Execution Guide in Spanish
-├── renv.lock                  # Exact R package versions used by the pipeline
-├── .Rprofile                  # Activates renv automatically when starting R
-├── LICENSE                    # MIT License
+├── .Rprofile                    # Automatic activation of the renv virtual environment
+├── .gitignore                   # Excludes heavy binary files and raw data per Zenodo standards
+├── renv.lock                    # Dependency lockfile recording exact R package versions
+├── training_report.qmd          # Quarto template of the training report (rendered by 02_train_models.R)
+├── run_test_pipeline.sh         # Bash runner for the end-to-end Minimal Working Example
+├── GUIA_EJECUCION.md            # Step-by-step execution guide in Spanish (all commands, flags, Zenodo, new data)
 │
-├── scripts/                   # Command-line R scripts
-│   ├── 01_prepare_data.R      # Step 1: Coordinate matching, reference table join & local deltas
-│   ├── 02_train_models.R      # Step 2: Threshold calculation, ML training, SHAP & HTML report
-│   └── 03_cnv_inference.R     # Step 3: 7-model consensus voting & CNV matrix generation
+├── R/                           # Pure, modular, roxygen2-documented R library functions
+│   ├── data_processing.R        # GFF intersection, dictionary classification, redundancy resolution, CNV extraction
+│   ├── model_evaluation.R       # Confusion matrices, Youden optimization, 7-model consensus, inference
+│   └── plotting.R               # ggplot2/plotly wrappers for confusion tiles, densities, benchmarks, heatmaps
 │
-├── R/                         # Internal R functions
-│   ├── data_processing.R      # GFF filtering, spatial overlaps, dictionary loading & CNV rules
-│   ├── model_evaluation.R     # Classification metrics, Youden cutoffs & consensus voting
-│   └── plotting.R             # Plots for densities, confusion matrices, benchmarks & heatmaps
+├── scripts/                     # Production CLI executables using optparse
+│   ├── 01_prepare_data.R        # Step 1: Spatial GFF overlap and feature engineering
+│   ├── 02_train_models.R        # Step 2: Model training, k-fold CV with downsampling, .rds serialization
+│   └── 03_cnv_inference.R       # Step 3: Production CNV inference via 7-model consensus system
 │
-├── data/                      # Input files and test data
-│   ├── reference/             # S. torvum reference GFF3, CAPTUS contigs & reference gene list
-│   ├── CAPTUS_Muestras/       # CAPTUS alignment statistics for biological samples
-│   ├── test_data/             # Small synthetic dataset for quick testing (< 25 KB)
-│   └── data_prepared.rds      # Prepared S. torvum training dataset (184 NUC sequences)
+├── data/
+│   ├── reference/               # Genomic reference GFF3 annotations and homology dictionaries
+│   ├── CAPTUS_Muestras/         # Multi-sample CAPTUS assembly statistics (downloaded from Zenodo)
+│   └── test_data/               # Lightweight mock dataset (<20 KB) for automated testing
 │
-├── models/                    # Saved R models (.rds) and performance tables (.tsv)
-└── results/                   # Output CNV matrices (.tsv), sequence catalogs & plots (.pdf/.png)
+├── models/                      # Pre-trained ML models and threshold objects (.rds)
+└── results/                     # Output CNV matrices, classification tables, and diagnostic plots
 ```
 
-## Requirements & Installation
+---
+
+## Prerequisites & Setup
 
 ### System Requirements
-- **Operating System:** Linux, macOS, or Windows (via WSL2).
-- **R:** $\ge 4.0.0$ (R 4.3+ or 4.6 recommended).
-- **Quarto CLI:** $\ge 1.3+$ (optional, only required to generate the HTML report `reporte_entrenamiento.html`).
-- **Standard command-line tools:** `bash`, `curl` or `wget`, `unzip`, `md5sum`.
+- **Linux** (tested on Ubuntu 20.04+, Debian, Arch/CachyOS) or **macOS**.
+- **R** ≥ 4.0.0 (R 4.3+ or 4.6 recommended).
+- **Quarto** ≥ 1.3+ (for compiling interactive HTML reports).
+- Standard build utilities (`gcc`, `g++`, `make`, `libcurl`, `openssl`).
 
-### Installation Steps
+### Installation
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/xyzdiego/TargetCNV-ML.git
+   cd TargetCNV-ML
+   ```
+
+2. **Restore dependencies with `renv`:**
+   Open an interactive R session or run via terminal to restore the exact package versions defined in `renv.lock`:
+   ```bash
+   Rscript -e "renv::restore()"
+   ```
+
+   > [!NOTE]
+   > The environment includes key bioinformatics and machine learning libraries: `GenomicRanges`, `rtracklayer`, `caret`, `glmnet`, `klaR`, `pROC`, `optparse`, `crosstalk`, `plotly`, `DT`, and `tidyverse`.
+
+---
+
+## Quickstart (Test Suite)
+
+TargetCNV-ML includes a self-contained **Minimal Working Example (MWE)** under `data/test_data/` containing simulated GFF3 reference coordinates, CAPTUS contigs, and statistical metrics across synthetic samples.
+
+Validate your installation by running the end-to-end test suite:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/xyzdiego/TargetCNV-ML.git
-cd TargetCNV-ML
-
-# 2. Restore the R package environment from renv.lock
-Rscript -e "renv::restore()"
-
-# 3. Make scripts executable, check dependencies, and run the test dataset
-chmod +x targetcnv.sh run_test_pipeline.sh scripts/*.R
-./targetcnv.sh doctor
-./targetcnv.sh test
+chmod +x run_test_pipeline.sh
+./run_test_pipeline.sh
 ```
 
-## Quick Execution in One Line (`./targetcnv.sh`)
+### What `run_test_pipeline.sh` does:
+1. Executes `01_prepare_data.R` to compute coordinate intersections and clean IDs.
+2. Executes `02_train_models.R` to optimize Youden cutoffs and train 5 classifiers using 3-fold cross-validation.
+3. Executes `03_cnv_inference.R` to apply the 7-model consensus, filter fragmentation, and produce the final CNV matrix.
+4. Validates that all output tables and graphics (`cnv_matrix.tsv`, `consensus_verdicts.tsv`, `plot_cnv_heatmap.pdf`) are successfully generated.
 
-You can run any workflow with a single command using `./targetcnv.sh`:
+---
 
-| Task | Command |
-| :--- | :--- |
-| **Check installed tools and R packages** | `./targetcnv.sh doctor` |
-| **Run the test dataset (MWE)** | `./targetcnv.sh test` |
-| **Download pretrained models from Zenodo** | `./targetcnv.sh zenodo` |
-| **Predict CNVs on new samples (auto-downloading models if needed)** | `./targetcnv.sh infer -i data/CAPTUS_Muestras/captus-extract_stats.tsv --auto-zenodo` |
-| **Reproduce the *Solanum torvum* experiment** | `./targetcnv.sh reproduce-storvum --cores 4` |
-| **Run all 3 steps on a new species** | `./targetcnv.sh run-all -g ref.gff3 -c captus.gff -s stats.tsv -d dict.xlsx -p SampleName -i pop_stats.tsv` |
-| **Rebuild the HTML training report** | `./targetcnv.sh report` |
+## Production Usage
 
-## Step-by-Step CLI Workflow
+> [!WARNING]
+> **Pre-trained Models & Zenodo Assets:**
+> In accordance with open-science standards, serialized models (`models/*.rds`) are archived on **Zenodo** to prevent Git repository bloat. Before running Step 3 (`03_cnv_inference.R`) on production datasets without re-training:
+> 1. Download the pre-trained model bundle (`TargetCNV_Models.zip`, ~380 KB) from Zenodo DOI: [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987).
+> 2. Unzip it at the project root (the archive already contains the `models/` folder):
+>    ```bash
+>    curl -L -o TargetCNV_Models.zip https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content
+>    unzip -o TargetCNV_Models.zip
+>    ```
 
-If you prefer to run each module separately to customize parameters:
+> [!TIP]
+> A complete step-by-step guide in Spanish (every command, flag and option, training with new data, MWE and Zenodo models) is available in [GUIA_EJECUCION.md](GUIA_EJECUCION.md).
 
-### Step 1: Data Preparation (`01_prepare_data.R`)
-Finds coordinate overlaps between CAPTUS contigs (`protein_match:NUC`) and reference genes (`gene`), checks matches against the reference orthology dictionary, marks secondary hits in the same gene as `FALSE_POSITIVE`, and computes within-locus differences (`delta_wscore`, `delta_pct_identity`).
+The pipeline is split into three modular, scriptable CLI entrypoints:
+
+```mermaid
+flowchart LR
+    A["Raw CAPTUS & GFF3"] --> B["01_prepare_data.R"]
+    B --> C["data_prepared.rds"]
+    C --> D["02_train_models.R"]
+    D --> E["models/*.rds"]
+    E --> F["03_cnv_inference.R"]
+    G["New CAPTUS Data"] --> F
+    F --> H["cnv_matrix.tsv"]
+    D --> I["training_report.qmd"]
+    I --> J["reporte_entrenamiento.html"]
+```
+
+### Step 1: Data Preparation & Spatial Overlaps
+
+Computes strict spatial overlaps (`GenomicRanges`), matches contigs against the reference dictionary, removes redundancies, and computes local delta scores.
 
 ```bash
 ./scripts/01_prepare_data.R \
@@ -113,8 +149,21 @@ Finds coordinate overlaps between CAPTUS contigs (`protein_match:NUC`) and refer
   --out_dir data/
 ```
 
-### Step 2: Model Training & Evaluation (`02_train_models.R`)
-Calculates optimal Youden index cutoffs for each alignment metric, finds the best weights for the heuristic combination, trains the machine learning classifiers using 5-fold cross-validation (both balanced via down-sampling and unbalanced), computes KernelSHAP variable importance, and generates the HTML report.
+**Parameters:**
+| Flag | Name | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `-g` | `--gff_ref` | File | Reference genome GFF3 annotation file `[Required]` |
+| `-c` | `--captus_gff` | File | CAPTUS assembled contigs GFF file `[Required]` |
+| `-s` | `--captus_stats` | File | CAPTUS statistics TSV (`captus-extract_stats.tsv`) `[Required]` |
+| `-d` | `--dict_ref` | File | Homology reference dictionary (.xlsx, .tsv, .csv) `[Optional]` |
+| `-p` | `--sample` | String | Specific sample name to filter within statistics `[Optional]` |
+| `-o` | `--out_dir` | Dir | Destination directory (default: `data/`) |
+
+---
+
+### Step 2: Model Training & Cross-Validation
+
+Computes optimal Youden univariate cutoffs, performs grid search for the weighted heuristic ensemble, balances classes (`down-sampling`), and trains supervised models via `caret`.
 
 ```bash
 ./scripts/02_train_models.R \
@@ -123,13 +172,27 @@ Calculates optimal Youden index cutoffs for each alignment metric, finds the bes
   --cv_folds 5 \
   --sampling down \
   --cores 4 \
-  --seed 1234 \
-  --report_file reporte_entrenamiento.html
+  --seed 1234
 ```
-*(Optional flags: `--extended_tournament` trains all 18 classifiers from the original study; `--train_stacking` fits a GLM stacking model on top of the best classifiers).*
 
-### Step 3: Consensus Prediction & CNV Matrix (`03_cnv_inference.R`)
-Applies the 7-model consensus vote to new samples, filters out assembly fragments, and exports the copy number matrix (`Locus x Samples`), the catalog of functional copies, and summary plots.
+**Parameters:**
+| Flag | Name | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `-d` | `--data` | File | Prepared data generated by Step 1 (.rds or .tsv) `[Required]` |
+| `-m` | `--out_models` | Dir | Directory to save trained `.rds` models (default: `models/`) |
+| `-k` | `--cv_folds` | Integer| Number of partitions for k-fold cross-validation (default: `5`) |
+| `-s` | `--sampling` | String | Class re-sampling method: `down`, `up`, or `none` (default: `down`) |
+| `-c` | `--cores` | Integer| Number of parallel execution threads (default: `detectCores() - 1`) |
+| `--seed` | `--seed` | Integer| Random seed for exact stochastic reproducibility (default: `1234`) |
+| | `--include_hit` | Flag | Include the CAPTUS integer hit rank as predictor (default: `FALSE`; not compatible with Step 3) |
+| | `--render_report` / `--no_render_report` | Flag | Render (default) or skip the HTML training report |
+| `-r` | `--report_file` | File | Output path of the HTML training report (default: `reporte_entrenamiento.html`) |
+
+---
+
+### Step 3: Production CNV Inference & Consensus
+
+Applies the **7-Model Consensus System** (Majority Rule ≥ 4/7 positive votes), performs spatial fragmentation control, and exports the final CNV matrix and publication-ready graphics.
 
 ```bash
 ./scripts/03_cnv_inference.R \
@@ -142,41 +205,61 @@ Applies the 7-model consensus vote to new samples, filters out assembly fragment
   --top_loci 30
 ```
 
-## Reference Results (*Solanum torvum*)
+**Parameters:**
+| Flag | Name | Type | Description |
+| :--- | :--- | :--- | :--- |
+| `-i` | `--input` | File | TSV/CSV file containing target capture contig metrics `[Required]` |
+| `-m` | `--models_dir` | Dir | Directory with serialized `.rds` models (default: `models/`) |
+| `-o` | `--out_dir` | Dir | Destination directory for tables and plots (default: `results/`) |
+| `-c` | `--cov_threshold`| Float | Minimum % individual coverage for confirmed homolog (default: `50.0`) |
+| `-f` | `--frag_threshold`| Float | Maximum % cumulative coverage for fragmentation (default: `120.0`) |
+| `-v` | `--min_votes` | Integer| Minimum positive votes to validate homology (default: `4`) |
+| `-t` | `--top_loci` | Integer| Number of top abundant gene families for heatmap (default: `30`) |
 
-Results on 184 `NUC` sequences from *Solanum torvum* (87 True Positives and 97 False Positives) using 5-fold cross-validation (`seed = 1234`, balanced with down-sampling):
+---
 
-| Model / Method | Balanced Acc. (%) | Sensitivity (%) | Specificity (%) | Precision (%) | FDR (%) | F1-Score | MCC | ROC-AUC |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Weighted Heuristic** | 88.86 | 83.91 | 93.81 | 92.41 | 7.59 | **0.880** | 0.784 | 0.921 |
-| **Neural Network (`nnet`)** | 87.32 | 83.91 | 90.72 | 88.98 | 11.02 | **0.864** | 0.750 | 0.927 |
-| **Polynomial SVM (`svmPoly`)** | 87.14 | 80.46 | 93.81 | 92.11 | 7.89 | **0.859** | 0.753 | **0.934** |
-| **LDA** | 86.74 | 82.76 | 90.72 | 88.89 | 11.11 | **0.857** | 0.739 | 0.922 |
-| **Naive Bayes (`nb`)** | 86.56 | 79.31 | 93.81 | 92.00 | 8.00 | **0.852** | 0.743 | **0.934** |
-| **Elastic Net (`glmnet`)** | 85.28 | 83.91 | 86.60 | 84.88 | 15.12 | **0.844** | 0.706 | 0.930 |
+### Step 4: Training Report (Quarto)
 
-## Pretrained Models on Zenodo
+Step 2 renders `training_report.qmd` automatically into `reporte_entrenamiento.html` (Youden cutoffs, weighted heuristic, balanced vs. unbalanced benchmarks with all metrics, confusion matrices, SHAP and separability plots). To re-render it without re-training:
 
-The models trained on *Solanum torvum* are available on Zenodo:
-- **DOI:** [`10.5281/zenodo.23463987`](https://doi.org/10.5281/zenodo.23463987)
-- **File:** `TargetCNV_Models.zip` (`MD5: 13ec7b35711158079f962a96314eb671`)
-- **Download command:** Run `./targetcnv.sh zenodo` to download the file, check its MD5 hash, and unpack the models into `models/`.
+```bash
+quarto render training_report.qmd \
+  -P models_dir:models \
+  -P data_file:data/data_prepared.rds \
+  --output reporte_entrenamiento.html
+```
 
-For full details on all flags and workflows, see the [Execution Guide (EXECUTION\_GUIDE.md)](https://www.google.com/search?q=EXECUTION_GUIDE.md).
+---
 
-## Citation & License
+## Citation
 
-If you use **TargetCNV-ML** in your work, please cite:
+If you use **TargetCNV-ML** in academic research or applied genomics pipelines, please cite the software and accompanying thesis:
 
 ```bibtex
-@software{TargetCNV_ML_2026,
-  author       = {Diego Torres and Contributors},
-  title        = {TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture},
-  year         = {2026},
+@software{targetcnv_ml_2026,
+  author       = {Benítez Duarte, Diego Andrés},
+  title        = {{TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture}},
+  month        = jul,
+  year         = 2026,
   publisher    = {Zenodo},
+  version      = {v1.0.0},
   doi          = {10.5281/zenodo.23463987},
-  url          = {https://github.com/xyzdiego/TargetCNV-ML}
+  url          = {https://doi.org/10.5281/zenodo.23463987}
+}
+
+@mastersthesis{benitez_duarte_thesis_2026,
+  author       = {Benítez Duarte, Diego Andrés},
+  title        = {{Desarrollo de un flujo de trabajo bioinformático para la Detección de Variación en el Número de Copias (CNV) de genes a partir de secuencias genómicas de lectura corta}},
+  school       = {Universidad Nacional de Colombia},
+  year         = 2026,
+  address      = {Colombia},
+  note         = {Master Thesis - Bioinformatics}
 }
 ```
 
-Released under the **MIT License** — see [LICENSE](https://www.google.com/search?q=LICENSE) for details.
+---
+
+## License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details. 
+The datasets and pre-trained models hosted on Zenodo are licensed under the **Creative Commons Attribution 4.0 International License (CC BY 4.0)**.
