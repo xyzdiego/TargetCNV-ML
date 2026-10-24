@@ -1,12 +1,12 @@
 # TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture
 
-[🇪🇸 Versión en Español](https://www.google.com/search?q=README_es.md) | [📘 Execution Guide (EN)](https://www.google.com/search?q=EXECUTION_GUIDE.md) | [📗 Guía de Ejecución (ES)](https://www.google.com/search?q=GUIA_EJECUCION.md)
+[🇪🇸 Versión en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md) | [📘 Execution Guide (EN)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md) | [📗 Guía de Ejecución (ES)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md)
 
-[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
-[](https://www.r-project.org/)
-[](https://opensource.org/licenses/MIT)
-[](#quickstart-test-suite)
-[](https://rstudio.github.io/renv/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
+[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
+[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
+[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
 
 A modular, reproducible, and CLI-driven bioinformatics software package designed to detect **Copy Number Variations (CNV)** and resolve **homologous gene expansions** from Target Capture high-throughput sequencing data.
 

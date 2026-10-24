@@ -1,12 +1,12 @@
 # Guía de Ejecución de TargetCNV-ML
 
-[🇬🇧 English Execution Guide](https://www.google.com/search?q=EXECUTION_GUIDE.md) | [🇪🇸 README en Español](https://www.google.com/search?q=README_es.md) | [🇬🇧 English README](README.md)
+[🇬🇧 English Execution Guide](https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md) | [🇪🇸 README en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md) | [🇬🇧 English README](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md)
 
-[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
-[](https://www.r-project.org/)
-[](https://opensource.org/licenses/MIT)
-[](#4-flujo-1-prueba-rápida-con-datos-simulados-mwe)
-[](https://rstudio.github.io/renv/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
+[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
+[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
+[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
 
 **TargetCNV-ML** es un paquete bioinformático modular, reproducible y ejecutable por línea de comandos (CLI) que detecta **Variaciones en el Número de Copias (CNV)** y resuelve **expansiones de genes homólogos** a partir de secuencias obtenidas mediante captura de genes (*Target Capture*).
 
