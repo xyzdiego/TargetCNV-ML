@@ -108,7 +108,9 @@ cmd_doctor() {
   Rscript -e '
     pkgs <- c("optparse", "dplyr", "tidyr", "stringr", "ggplot2", "caret", "glmnet",
               "klaR", "pROC", "GenomicRanges", "rtracklayer", "readxl", "kernelshap",
-              "shapviz", "DT", "plotly")
+              "shapviz", "DT", "plotly", "cowplot", "NeuralNetTools", "caretEnsemble",
+              "kernlab", "xgboost", "gbm", "randomForest", "RSNNS", "deepnet", "ipred",
+              "doParallel", "knitr", "rmarkdown")
     missing_pkgs <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
     if (length(missing_pkgs) == 0) {
       cat("  \033[0;32m✓ Todos los paquetes principales de R estan instalados.\033[0m\n")
@@ -159,13 +161,28 @@ cmd_zenodo() {
       echo -e "  ${GREEN}✓ Hash MD5 verificado (${actual_md5})${NC}"
     else
       echo -e "  ${RED}✗ Error de integridad MD5: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
+      rm -f "$ZENODO_ZIP"
       exit 1
     fi
+  elif command -v md5 >/dev/null 2>&1; then
+    echo -e "${BOLD}${BLUE}[ZENODO] Verificando suma de comprobacion MD5...${NC}"
+    local actual_md5
+    actual_md5="$(md5 -q "$ZENODO_ZIP")"
+    if [ "$actual_md5" = "$ZENODO_MD5" ]; then
+      echo -e "  ${GREEN}✓ Hash MD5 verificado (${actual_md5})${NC}"
+    else
+      echo -e "  ${RED}✗ Error de integridad MD5: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
+      rm -f "$ZENODO_ZIP"
+      exit 1
+    fi
+  else
+    echo -e "  ${YELLOW}[AVISO] No se encontro md5sum ni md5 en el sistema: se omitio la verificacion MD5.${NC}"
   fi
 
   mkdir -p "$out_dir"
   unzip -o "$ZENODO_ZIP" -d "$out_dir"
-  echo -e "${GREEN}✓ Modelos extraidos exitosamente en: ${BOLD}${out_dir}/models/${NC}\n"
+  rm -f "$ZENODO_ZIP"
+  echo -e "${GREEN}✓ Modelos extraidos exitosamente en: ${BOLD}${out_dir}/models/${NC} (archivo temporal .zip eliminado)\n"
 }
 
 cmd_infer() {
@@ -236,7 +253,6 @@ cmd_reproduce_storvum() {
     --models_dir models/ \
     --out_dir results/ \
     --cov_threshold 50.0 \
-    --frag_threshold 120.0 \
     --min_votes 4 \
     --top_loci 30
 
@@ -260,7 +276,6 @@ cmd_run_all() {
   local seed=1234
   local min_votes=4
   local cov_threshold="50.0"
-  local frag_threshold="120.0"
   local top_loci=30
   local report_file="reporte_entrenamiento.html"
 
@@ -282,7 +297,6 @@ cmd_run_all() {
       --seed) seed="$2"; shift 2 ;;
       -v|--min_votes) min_votes="$2"; shift 2 ;;
       --cov_threshold) cov_threshold="$2"; shift 2 ;;
-      --frag_threshold) frag_threshold="$2"; shift 2 ;;
       -t|--top_loci) top_loci="$2"; shift 2 ;;
       -r|--report_file) report_file="$2"; shift 2 ;;
       -h|--help)
@@ -292,8 +306,9 @@ cmd_run_all() {
     esac
   done
 
-  if [ -z "$captus_gff" ] || [ -z "$captus_stats" ]; then
-    echo -e "${RED}[ERROR] 'run-all' requiere al menos -c (--captus_gff) y -s (--captus_stats).${NC}"
+  if [ -z "$captus_gff" ] || [ -z "$captus_stats" ] || [ -z "$dict_ref" ]; then
+    echo -e "${RED}[ERROR] 'run-all' requiere al menos -c (--captus_gff), -s (--captus_stats) y -d (--dict_ref).${NC}"
+    echo -e "${YELLOW}        El diccionario (-d) es obligatorio para generar etiquetas TP y FP antes de entrenar en el Paso 02.${NC}"
     exit 1
   fi
   if [ -z "$infer_input" ]; then
@@ -325,7 +340,6 @@ cmd_run_all() {
     --models_dir "$out_models" \
     --out_dir "$out_results" \
     --cov_threshold "$cov_threshold" \
-    --frag_threshold "$frag_threshold" \
     --min_votes "$min_votes" \
     --top_loci "$top_loci"
 
@@ -382,6 +396,34 @@ case "$SUBCOMMAND" in
     cmd_reproduce_storvum "$@" ;;
   report)
     cmd_report "$@" ;;
+  snapshot)
+    print_banner
+    echo -e "\n${BOLD}${BLUE}[SNAPSHOT] Vinculando todos los paquetes (incluyendo Quarto/rmarkdown/knitr y motores caret) a renv/library...${NC}"
+    USER_R_LIBS="$(Rscript --vanilla -e 'cat(paste(.libPaths(), collapse = ":"))')"
+    Rscript -e "
+      ext_libs <- strsplit('$USER_R_LIBS', ':')[[1]]
+      ext_libs <- ext_libs[nzchar(ext_libs) & dir.exists(ext_libs)]
+      cat('  -> Librerias base detectadas:', paste(ext_libs, collapse = ', '), '\n')
+      req_pkgs <- c(
+        'rmarkdown', 'knitr', 'DT', 'plotly', 'cowplot', 'jsonlite', 'htmltools',
+        'optparse', 'dplyr', 'tidyr', 'stringr', 'ggplot2', 'caret', 'caretEnsemble',
+        'glmnet', 'klaR', 'kernlab', 'randomForest', 'gbm', 'xgboost', 'RSNNS',
+        'deepnet', 'ipred', 'e1071', 'MASS', 'nnet', 'rpart', 'rpart.plot',
+        'pROC', 'GenomicRanges', 'rtracklayer', 'S4Vectors', 'IRanges', 'readxl',
+        'kernelshap', 'shapviz', 'NeuralNetTools', 'doParallel', 'foreach'
+      )
+      avail_pkgs <- req_pkgs[sapply(req_pkgs, function(p) any(file.exists(file.path(ext_libs, p))))]
+      renv::hydrate(packages = avail_pkgs, sources = ext_libs, prompt = FALSE)
+      renv::hydrate(sources = ext_libs, prompt = FALSE)
+      if (requireNamespace('BiocVersion', quietly = TRUE)) {
+        bioc_ver <- as.character(packageVersion('BiocVersion')[, 1:2])
+        tryCatch(renv::settings\$bioconductor.version(bioc_ver), error = function(e) {})
+        cat('  -> Bioconductor detectado:', bioc_ver, '\n')
+      }
+      renv::settings\$external.libraries(character(0))
+      renv::snapshot(type = 'all', prompt = FALSE, force = TRUE)
+    "
+    echo -e "${GREEN}✓ renv/library vinculado (con knitr, rmarkdown y motores caret) y renv.lock actualizado exitosamente.${NC}\n" ;;
   doctor|check)
     cmd_doctor "$@" ;;
   -h|--help|help)

@@ -6,7 +6,7 @@
 #'
 #' Extrae el identificador limpio del ortogrupo (OG) y construye un ID compatible
 #' con la nomenclatura de contigs ensamblados en el GFF de CAPTUS (OGxxxx__00).
-#' Respeta la logica exacta de Workflow_Central_Sin_Rescate.R.
+#' Respeta la logica exacta de el flujo de referencia.
 #'
 #' @param df Data frame con las estadisticas crudas de CAPTUS (captus-extract_stats.tsv).
 #' @param ref_col Nombre de la columna que contiene la referencia u ortogrupo.
@@ -59,19 +59,24 @@ filter_gff_features <- function(gff, feature_type = "gene") {
 harmonize_gff_seqlevels <- function(query_gff,
                                     subject_gff,
                                     prefix_regex = "^[Ss]citrullifolium_|^[Ss]torvum_|^contig_") {
-  common_levels <- intersect(GenomeInfoDb::seqlevels(query_gff), GenomeInfoDb::seqlevels(subject_gff))
-  if (length(common_levels) == 0) {
-    GenomeInfoDb::seqlevels(query_gff) <- stringr::str_remove_all(
-      GenomeInfoDb::seqlevels(query_gff), prefix_regex
-    )
-    GenomeInfoDb::seqlevels(subject_gff) <- stringr::str_remove_all(
-      GenomeInfoDb::seqlevels(subject_gff), prefix_regex
-    )
-  }
+  tryCatch({
+    q_levels <- as.character(unique(query_gff@seqnames))
+    s_levels <- as.character(unique(subject_gff@seqnames))
+    if (length(base::intersect(q_levels, s_levels)) == 0) {
+      suppressPackageStartupMessages(library(GenomicRanges))
+      seqlevels(query_gff) <- stringr::str_remove_all(seqlevels(query_gff), prefix_regex)
+      seqlevels(subject_gff) <- stringr::str_remove_all(seqlevels(subject_gff), prefix_regex)
+    }
+  }, error = function(e) {
+    warning(sprintf("[harmonize_gff_seqlevels] No se pudieron armonizar seqlevels via GenomicRanges (%s); se usara comparacion directa de nombres.", conditionMessage(e)), call. = FALSE)
+  })
   list(query_gff = query_gff, subject_gff = subject_gff)
 }
 
 #' Ejecuta la interseccion espacial entre contigs de CAPTUS y genes de referencia
+#'
+#' Incluye respaldo directo sobre los slots S4 (@seqnames, @ranges, @strand) cuando el entorno
+#' renv local carece de GenomeInfoDb (evitando el fallo de despacho S4 en intersect/findOverlaps).
 #'
 #' @param query_gff Objeto GRanges con marcadores funcionales de CAPTUS (protein_match:NUC).
 #' @param subject_gff Objeto GRanges con los genes del genoma de referencia.
@@ -82,18 +87,68 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
   stopifnot(inherits(query_gff, "GRanges"))
   stopifnot(inherits(subject_gff, "GRanges"))
 
-  harmonized <- harmonize_gff_seqlevels(query_gff, subject_gff)
+  prefix_regex <- "^[Ss]citrullifolium_|^[Ss]torvum_|^contig_"
+  harmonized <- harmonize_gff_seqlevels(query_gff, subject_gff, prefix_regex = prefix_regex)
   query_gff <- harmonized$query_gff
   subject_gff <- harmonized$subject_gff
 
-  hits <- GenomicRanges::findOverlaps(
-    query = query_gff,
-    subject = subject_gff,
-    type = "any",
-    ignore.strand = ignore_strand
-  )
+  df_cruces <- tryCatch({
+    hits <- GenomicRanges::findOverlaps(
+      query = query_gff,
+      subject = subject_gff,
+      type = "any",
+      ignore.strand = ignore_strand
+    )
+    if (length(hits) == 0) {
+      data.frame(Captus_Row = integer(0), Ref_Row = integer(0), stringsAsFactors = FALSE)
+    } else {
+      data.frame(
+        Captus_Row = S4Vectors::queryHits(hits),
+        Ref_Row    = S4Vectors::subjectHits(hits),
+        stringsAsFactors = FALSE
+      )
+    }
+  }, error = function(e) {
+    warning(sprintf("[find_spatial_overlaps] GenomicRanges::findOverlaps fallo (%s); ejecutando cruce espacial directo sobre slots S4 (@seqnames, @ranges, @strand).", conditionMessage(e)), call. = FALSE)
+    # Respaldo exacto por intervalos S4 (sin requerir GenomeInfoDb)
+    q_seq <- as.character(query_gff@seqnames)
+    s_seq <- as.character(subject_gff@seqnames)
+    if (length(base::intersect(unique(q_seq), unique(s_seq))) == 0) {
+      q_seq <- stringr::str_remove_all(q_seq, prefix_regex)
+      s_seq <- stringr::str_remove_all(s_seq, prefix_regex)
+    }
+    q_start  <- as.integer(query_gff@ranges@start)
+    q_end    <- q_start + as.integer(query_gff@ranges@width) - 1L
+    q_strand <- as.character(query_gff@strand)
 
-  if (length(hits) == 0) {
+    s_start  <- as.integer(subject_gff@ranges@start)
+    s_end    <- s_start + as.integer(subject_gff@ranges@width) - 1L
+    s_strand <- as.character(subject_gff@strand)
+
+    s_by_seq <- split(seq_along(s_seq), s_seq)
+    q_hits_list <- vector("list", length(q_seq))
+
+    for (i in seq_along(q_seq)) {
+      cand <- s_by_seq[[q_seq[i]]]
+      if (is.null(cand) || length(cand) == 0) next
+      ov <- cand[q_start[i] <= s_end[cand] & q_end[i] >= s_start[cand]]
+      if (length(ov) == 0) next
+      if (!ignore_strand && q_strand[i] != "*") {
+        ov <- ov[s_strand[ov] == "*" | s_strand[ov] == q_strand[i]]
+      }
+      if (length(ov) > 0) {
+        q_hits_list[[i]] <- data.frame(Captus_Row = rep.int(i, length(ov)), Ref_Row = ov, stringsAsFactors = FALSE)
+      }
+    }
+    res_df <- dplyr::bind_rows(q_hits_list)
+    if (nrow(res_df) == 0) {
+      data.frame(Captus_Row = integer(0), Ref_Row = integer(0), stringsAsFactors = FALSE)
+    } else {
+      res_df
+    }
+  })
+
+  if (nrow(df_cruces) == 0) {
     return(data.frame(
       Captus_Row = integer(0),
       Ref_Row = integer(0),
@@ -103,12 +158,6 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
       stringsAsFactors = FALSE
     ))
   }
-
-  df_cruces <- data.frame(
-    Captus_Row = S4Vectors::queryHits(hits),
-    Ref_Row    = S4Vectors::subjectHits(hits),
-    stringsAsFactors = FALSE
-  )
 
   df_cruces$ID_Captus <- as.character(query_gff$Name[df_cruces$Captus_Row])
   df_cruces$OG_Captus <- dplyr::coalesce(
@@ -144,7 +193,7 @@ extract_target_loci_from_gff <- function(query_gff) {
       stringr::str_extract(as.character(query_gff$Target), "^\\S+"),
       "-OG[0-9]+$"
     ),
-    Contig_Name = as.character(GenomicRanges::seqnames(query_gff)),
+    Contig_Name = as.character(query_gff@seqnames),
     stringsAsFactors = FALSE
   ) %>%
     dplyr::mutate(
@@ -156,7 +205,7 @@ extract_target_loci_from_gff <- function(query_gff) {
 #' Construye el diccionario de homologia teorica a partir del archivo Excel de referencia
 #'
 #' Reproduce con exactitud matematica el filtrado de vias metabolicas y ensamblajes
-#' de `Workflow_Central_Sin_Rescate.R` cuando se proporciona `Genes_Capture_May_2026.xlsx`,
+#' de `el flujo de referencia` cuando se proporciona `Genes_Capture_May_2026.xlsx`,
 #' o carga directamente cualquier tabla `.xlsx`, `.tsv` o `.csv` personalizada.
 #'
 #' @param dict_path Ruta al archivo de diccionario (.xlsx, .tsv, .csv).
@@ -196,15 +245,14 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
       sequences_ste <- readxl::read_excel(dict_path, sheet = "Sequences_Torva") %>%
         dplyr::filter(stringr::str_detect(Assembly, "stellati"), Probe_ID %in% probes_validos)
 
+      # Conservar todas las correspondencias validas HOG_ID <-> OG_ID ponderadas por frecuencia real antes de distinct()
       puente_og_hog <- readxl::read_excel(dict_path, sheet = "Contigs_probe_design") %>%
         dplyr::select(OG_ID = OG_ID_Pangenomes, HOG_ID = HOG_ID_Solanum) %>%
         dplyr::filter(!is.na(OG_ID), !is.na(HOG_ID)) %>%
-        dplyr::distinct() %>%
-        dplyr::add_count(OG_ID, name = "n_hog") %>%
-        dplyr::group_by(OG_ID) %>%
-        dplyr::slice_max(order_by = n_hog, n = 1, with_ties = FALSE) %>%
-        dplyr::ungroup() %>%
-        dplyr::select(OG_ID, HOG_ID)
+        dplyr::count(OG_ID, HOG_ID, name = "n_pair") %>%
+        dplyr::arrange(dplyr::desc(n_pair)) %>%
+        dplyr::select(OG_ID, HOG_ID) %>%
+        dplyr::distinct()
 
       dict_ste <- cnv_ste_raw %>%
         dplyr::left_join(contigs_probe, by = "Probe_ID") %>%
@@ -241,9 +289,7 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
         dplyr::select(-OG_ID) %>%
         dplyr::left_join(contigs_probe, by = "Probe_ID") %>%
         dplyr::left_join(sequences_cit %>% dplyr::select(-Orthogroup_ID), by = "Probe_ID") %>%
-        dplyr::mutate(Assembly = "S. citrullifolium Benoit et al") %>%
-        dplyr::filter(trimws(Pathway) %in% pathways_filtro,
-                      Assembly == "S. citrullifolium Benoit et al") %>%
+        dplyr::filter(trimws(Pathway) %in% pathways_filtro) %>%
         dplyr::select(-`S._citrullifolium`) %>%
         dplyr::left_join(sequences_cit %>% dplyr::select(Seq, Orthogroup_ID), by = "Seq") %>%
         dplyr::filter(!is.na(Contig_ID)) %>%
@@ -254,7 +300,7 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
       return(dict_cit)
     }
 
-    # Caso 3: S. torvum (experimento central en Workflow_Central_Sin_Rescate.R)
+    # Caso 3: S. torvum (experimento central en el flujo de referencia)
     if (all(c("CNV_Benoit", "Contigs_probe_design", "Sequences_Torva") %in% sheets)) {
       cnv_benoit <- readxl::read_excel(dict_path, sheet = "CNV_Benoit") %>%
         dplyr::select(OG_ID, Probe_ID, dplyr::any_of(c("S._torvum", "S_torvum")))
@@ -356,7 +402,7 @@ classify_spatial_hits <- function(df_cruces,
       ),
       Doble_Control_Biologico = dplyr::case_when(
         Validacion_Espacial == "TRUE_POSITIVE" ~ "1_Validado_Benoit_Exacto",
-        !is.na(.data[[dict_og_col]]) & OG_Captus != .data[[dict_og_col]] ~ "2_Hit_Cruzado_OG_Vecino",
+        !is.na(.data[[dict_og_col]]) & OG_Captus != .data[[dict_og_col]] ~ "2_Hit_Cruzado_Homologo_Vecino",
         is.na(.data[[dict_og_col]]) ~ "3_Expansion_Nueva_Genoma"
       ),
       prioridad = dplyr::if_else(Validacion_Espacial == "TRUE_POSITIVE", 0L, 1L)
@@ -449,25 +495,27 @@ calculate_locus_deltas <- function(df,
     dplyr::ungroup()
 }
 
-#' Extrae la Matriz de Variacion en el Numero de Copias (CNV) con control de fragmentacion
+#' Extrae la Matriz de Variacion en el Numero de Copias (CNV) con regla de un solo umbral
 #'
-#' Aplica las reglas biologicas de cobertura individual (`cov_threshold`) y
-#' cobertura acumulada (`frag_threshold`) sobre los homologos validados por consenso.
+#' Ordena los homologos validados por cobertura (`pct_recovered`) de mayor a menor
+#' dentro de cada muestra y locus, clasificando la primera secuencia como `Copia_Principal`,
+#' las adicionales con cobertura >= `cov_threshold` como `Homologo_Confirmado` y las
+#' menores a ese umbral como `No_Contado`.
 #'
 #' @param df Data frame con los veredictos del consenso de 7 modelos.
 #' @param sample_col Nombre de la columna de muestra.
 #' @param locus_col Nombre de la columna de locus/ortogrupo.
-#' @param cov_threshold Cobertura individual minima (%) para confirmar un paralogo genuino (default: 50.0).
-#' @param frag_threshold Cobertura acumulada maxima (%) para diagnosticar fragmentacion de ensamblaje (default: 120.0).
+#' @param cov_threshold Cobertura individual minima (%) para confirmar un homologo adicional (default: 50.0).
 #' @param verdict_col Columna con el veredicto de consenso.
+#' @param ... Argumentos adicionales ignorados por compatibilidad.
 #' @return Lista con `cnv_matrix`, `cnv_annotated` y `functional_genes`.
 #' @export
 extract_cnv_matrix <- function(df,
                                sample_col = "Sample",
                                locus_col = "Locus_Ortogrupo",
                                cov_threshold = 50.0,
-                               frag_threshold = 120.0,
-                               verdict_col = "Veredicto_Consenso") {
+                               verdict_col = "Veredicto_Consenso",
+                               ...) {
   stopifnot(is.data.frame(df))
   stopifnot(sample_col %in% colnames(df))
   stopifnot(locus_col %in% colnames(df))
@@ -483,18 +531,16 @@ extract_cnv_matrix <- function(df,
     dplyr::group_by(.data[[sample_col]], .data[[locus_col]]) %>%
     dplyr::arrange(dplyr::desc(as.numeric(pct_recovered)), .by_group = TRUE) %>%
     dplyr::mutate(
-      cobertura_acumulada = cumsum(as.numeric(pct_recovered)),
       Clasificacion_Copia = dplyr::case_when(
         dplyr::row_number() == 1 ~ "Copia_Principal",
-        dplyr::row_number() > 1 & as.numeric(pct_recovered) >= cov_threshold ~ "Paralogo_Confirmado",
-        dplyr::row_number() > 1 & as.numeric(pct_recovered) < cov_threshold & cobertura_acumulada <= frag_threshold ~ "Fragmentacion_de_Ensamblaje",
-        TRUE ~ "Paralogo_Dudoso"
+        dplyr::row_number() > 1 & as.numeric(pct_recovered) >= cov_threshold ~ "Homologo_Confirmado",
+        TRUE ~ "No_Contado"
       )
     ) %>%
     dplyr::ungroup()
 
   df_funcionales <- df_cnv_bruto %>%
-    dplyr::filter(Clasificacion_Copia %in% c("Copia_Principal", "Paralogo_Confirmado")) %>%
+    dplyr::filter(Clasificacion_Copia %in% c("Copia_Principal", "Homologo_Confirmado")) %>%
     dplyr::arrange(.data[[locus_col]])
 
   if (nrow(df_funcionales) == 0) {

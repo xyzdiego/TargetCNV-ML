@@ -2,63 +2,26 @@
 # TargetCNV-ML: Evaluacion Diagnostica, Cortes de Youden y Consenso (R/model_evaluation.R)
 # ==============================================================================
 
-#' Evalua una matriz de confusion o vectores de prediccion/referencia
-#'
-#' @param data Objeto `confusionMatrix`, tabla 2x2 o vector de predicciones.
-#' @param reference Vector de clases reales (cuando `data` es un vector).
-#' @param positive_class Etiqueta de la clase positiva (por defecto "TP").
-#' @param model_name Nombre identificador del modelo.
-#' @return Data frame de 1 fila con metricas diagnosticas clasicas.
-#' @export
-evaluate_confusion_matrix <- function(data,
-                                      reference = NULL,
-                                      positive_class = "TP",
-                                      model_name = "Modelo") {
-  if (inherits(data, "confusionMatrix")) {
-    cm <- data
-  } else if (is.table(data) || is.matrix(data)) {
-    cm <- list(
-      table = data,
-      overall = c(Accuracy = sum(diag(data)) / sum(data)),
-      byClass = c(
-        Sensitivity = data[positive_class, positive_class] / sum(data[, positive_class]),
-        Specificity = sum(data[-which(rownames(data) == positive_class), -which(colnames(data) == positive_class)]) /
-          sum(data[, -which(colnames(data) == positive_class)]),
-        Precision = data[positive_class, positive_class] / sum(data[positive_class, ])
-      )
-    )
-    cm$byClass["F1"] <- 2 * (cm$byClass["Precision"] * cm$byClass["Sensitivity"]) /
-      (cm$byClass["Precision"] + cm$byClass["Sensitivity"])
-  } else {
-    stopifnot(!is.null(reference))
-    data_fac <- factor(as.character(data), levels = c("TP", "FP"))
-    ref_fac  <- factor(as.character(reference), levels = c("TP", "FP"))
-    cm <- caret::confusionMatrix(data = data_fac, reference = ref_fac, mode = "everything")
-  }
-
-  acc  <- as.numeric(cm$overall["Accuracy"])
-  sens <- as.numeric(cm$byClass["Sensitivity"])
-  spec <- as.numeric(cm$byClass["Specificity"])
-  prec <- as.numeric(cm$byClass["Precision"])
-  f1   <- as.numeric(cm$byClass["F1"])
-  fdr  <- 1 - prec
-
-  data.frame(
-    Modelo = model_name,
-    Exactitud = acc,
-    Sensibilidad = sens,
-    Especificidad = spec,
-    Precision = prec,
-    FDR = fdr,
-    F1_Score = f1,
-    stringsAsFactors = FALSE
+# Cargar especificaciones compartidas si existen en el mismo directorio R/
+local({
+  specs_candidates <- c(
+    file.path("R", "model_specs.R"),
+    "model_specs.R"
   )
-}
+  for (cand in specs_candidates) {
+    if (file.exists(cand)) {
+      source(cand, local = FALSE)
+      break
+    }
+  }
+})
 
 #' Calcula el esquema canonico de 16 columnas de metricas de clasificacion binaria
 #'
 #' Estandariza las tablas de benchmark para modelos supervisados (escenarios
 #' balanceado y desbalanceado), cortes univariados de Youden y ensamble heuristico.
+#' Devuelve NA_real_ cuando el denominador de una metrica es 0 y fija la direccion
+#' de la curva ROC como `levels = c("FP", "TP"), direction = "<"`.
 #'
 #' @param pred Vector de clases predichas ("TP" o "FP").
 #' @param obs Vector de clases observadas reales ("TP"/"TRUE_POSITIVE" o "FP"/"FALSE_POSITIVE").
@@ -87,28 +50,35 @@ compute_classification_metrics <- function(pred,
   tn <- sum(pred_clean == "FP" & obs_clean == "FP", na.rm = TRUE)
 
   total <- tp + fp + fn + tn
-  acc <- if (total > 0) (tp + tn) / total else NA_real_
-  sens <- if ((tp + fn) > 0) tp / (tp + fn) else 0
-  spec <- if ((tn + fp) > 0) tn / (tn + fp) else 0
-  prec <- if ((tp + fp) > 0) tp / (tp + fp) else 0
-  vpn  <- if ((tn + fn) > 0) tn / (tn + fn) else 0
-  fdr  <- 1 - prec
-  f1   <- if ((prec + sens) > 0) 2 * (prec * sens) / (prec + sens) else 0
-  bal_acc <- (sens + spec) / 2
+  acc     <- if (total > 0) (tp + tn) / total else NA_real_
+  sens    <- if ((tp + fn) > 0) tp / (tp + fn) else NA_real_
+  spec    <- if ((tn + fp) > 0) tn / (tn + fp) else NA_real_
+  prec    <- if ((tp + fp) > 0) tp / (tp + fp) else NA_real_
+  vpn     <- if ((tn + fn) > 0) tn / (tn + fn) else NA_real_
+  fdr     <- if (!is.na(prec)) 1 - prec else NA_real_
+  f1      <- if (!is.na(prec) && !is.na(sens) && (prec + sens) > 0) 2 * (prec * sens) / (prec + sens) else NA_real_
+  bal_acc <- if (!is.na(sens) && !is.na(spec)) (sens + spec) / 2 else NA_real_
 
   num_mcc <- (as.numeric(tp) * as.numeric(tn)) - (as.numeric(fp) * as.numeric(fn))
   den_mcc <- sqrt(as.numeric(tp + fp) * as.numeric(tp + fn) * as.numeric(tn + fp) * as.numeric(tn + fn))
-  mcc <- if (!is.na(den_mcc) && den_mcc > 0) num_mcc / den_mcc else 0
+  mcc <- if (!is.na(den_mcc) && den_mcc > 0) num_mcc / den_mcc else NA_real_
 
   p_o <- acc
-  p_e <- if (total > 0) (((as.numeric(tp + fp) * as.numeric(tp + fn)) + (as.numeric(fn + tn) * as.numeric(fp + tn))) / (as.numeric(total)^2)) else 1
-  kappa <- if (!is.na(p_e) && (1 - p_e) > 0) (p_o - p_e) / (1 - p_e) else 0
+  p_e <- if (total > 0) (((as.numeric(tp + fp) * as.numeric(tp + fn)) + (as.numeric(fn + tn) * as.numeric(fp + tn))) / (as.numeric(total)^2)) else NA_real_
+  kappa <- if (!is.na(p_e) && (1 - p_e) > 0) (p_o - p_e) / (1 - p_e) else NA_real_
 
   auc_val <- NA_real_
   if (!is.null(score) && length(score) == length(obs_clean)) {
     tryCatch({
+      obs_roc <- factor(as.character(obs_clean), levels = c("FP", "TP"))
       roc_obj <- suppressMessages(
-        pROC::roc(response = obs_clean, predictor = as.numeric(score), levels = c("FP", "TP"), quiet = TRUE)
+        pROC::roc(
+          response = obs_roc,
+          predictor = as.numeric(score),
+          levels = c("FP", "TP"),
+          direction = "<",
+          quiet = TRUE
+        )
       )
       auc_val <- as.numeric(roc_obj$auc)
     }, error = function(e) {})
@@ -137,6 +107,9 @@ compute_classification_metrics <- function(pred,
 
 #' Calcula el umbral optimo de Youden (J = Sensibilidad + Especificidad - 1)
 #'
+#' Fija explicitamente `levels = c("FP", "TP"), direction = "<"` para garantizar
+#' consistencia con la regla de decision `predictor >= threshold -> TP`.
+#'
 #' @param response Vector con la variable respuesta real.
 #' @param predictor Vector numerico continuo de la metrica a evaluar.
 #' @param positive_class Etiqueta de la clase positiva.
@@ -145,10 +118,16 @@ compute_classification_metrics <- function(pred,
 calculate_youden_threshold <- function(response, predictor, positive_class = "TRUE_POSITIVE") {
   stopifnot(length(response) == length(predictor))
   val_idx <- !is.na(response) & !is.na(predictor)
-  resp <- response[val_idx]
+  resp_raw <- response[val_idx]
+  resp <- factor(
+    dplyr::if_else(as.character(resp_raw) %in% c("TP", "TRUE_POSITIVE", positive_class), "TP", "FP"),
+    levels = c("FP", "TP")
+  )
   pred <- as.numeric(predictor[val_idx])
 
-  roc_obj <- suppressMessages(pROC::roc(response = resp, predictor = pred, quiet = TRUE))
+  roc_obj <- suppressMessages(
+    pROC::roc(response = resp, predictor = pred, levels = c("FP", "TP"), direction = "<", quiet = TRUE)
+  )
   best_coords <- pROC::coords(
     roc_obj, "best",
     ret = c("threshold", "specificity", "sensitivity"),
@@ -226,6 +205,11 @@ optimize_weighted_heuristic <- function(df_votes,
   colnames(grid) <- metric_cols
   grid <- grid[rowSums(grid) > 0, ]
 
+  resp_fac <- factor(
+    dplyr::if_else(as.character(response) %in% c("TP", "TRUE_POSITIVE", positive_class), "TP", "FP"),
+    levels = c("FP", "TP")
+  )
+
   vote_mat <- as.matrix(df_votes[, metric_cols, drop = FALSE] == "TP")
   best_auc <- -1
   best_weights <- NULL
@@ -234,7 +218,9 @@ optimize_weighted_heuristic <- function(df_votes,
   for (i in seq_len(nrow(grid))) {
     w <- as.numeric(grid[i, ])
     scores <- as.vector(vote_mat %*% w)
-    roc_i <- suppressMessages(pROC::roc(response = response, predictor = scores, quiet = TRUE))
+    roc_i <- suppressMessages(
+      pROC::roc(response = resp_fac, predictor = scores, levels = c("FP", "TP"), direction = "<", quiet = TRUE)
+    )
     auc_i <- as.numeric(roc_i$auc)
 
     if (auc_i > best_auc) {
@@ -296,16 +282,18 @@ predict_weighted_heuristic <- function(df_predictors, thresholds, weights, globa
 #' @param df_predictions Data frame con las columnas de prediccion de cada modelo votante.
 #' @param model_cols Vector con los nombres de las columnas votantes.
 #' @param min_votes Numero minimo de votos afirmativos ("TP") para declarar `Homologo_Valido`.
-#' @return Data frame enriquecido con `Votos_TP` y `Veredicto_Consenso`.
+#' @return Data frame enriquecido con `Votos_TP`, `Proporcion_Acuerdo` y `Veredicto_Consenso`.
 #' @export
 consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   stopifnot(is.data.frame(df_predictions))
   stopifnot(all(model_cols %in% colnames(df_predictions)))
 
+  n_models <- length(model_cols)
   votos_matrix <- as.matrix(df_predictions[, model_cols, drop = FALSE]) == "TP"
   votos_totales <- rowSums(votos_matrix, na.rm = TRUE)
 
   df_predictions$Votos_TP <- as.integer(votos_totales)
+  df_predictions$Proporcion_Acuerdo <- round(votos_totales / max(1L, n_models), 3)
   df_predictions$Veredicto_Consenso <- dplyr::if_else(
     votos_totales >= min_votes,
     "Homologo_Valido",
@@ -313,31 +301,4 @@ consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   )
 
   return(df_predictions)
-}
-
-#' Ejecuta inferencia de consenso sobre una lista de modelos con umbrales personalizados
-#'
-#' @param df Data frame con las variables predictoras.
-#' @param models_list Lista nombrada de objetos de modelo `caret`.
-#' @param threshold_list Lista nombrada de umbrales de probabilidad por modelo.
-#' @param min_votes Minimo de votos para consenso.
-#' @return Data frame con las predicciones por modelo y el consenso consolidado.
-#' @export
-predict_cnv_pipeline <- function(df, models_list, threshold_list, min_votes = 4) {
-  stopifnot(is.data.frame(df))
-
-  res_df <- df
-  model_cols <- names(models_list)
-
-  for (m in model_cols) {
-    mod <- models_list[[m]]
-    prob_df <- stats::predict(mod, newdata = df, type = "prob")
-    pos_col <- intersect(c("TP", "TRUE_POSITIVE"), colnames(prob_df))[1]
-    probs <- prob_df[[pos_col]]
-    thresh <- if (!is.null(threshold_list[[m]])) threshold_list[[m]] else 0.5
-    res_df[[m]] <- dplyr::if_else(probs >= thresh, "TP", "FP")
-  }
-
-  res_df <- consolidar_consenso(res_df, model_cols = model_cols, min_votes = min_votes)
-  return(res_df)
 }

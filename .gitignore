@@ -1,11 +1,17 @@
-# Entornos e historiales de R
-.Rproj.user
+# R history and session files
 .Rhistory
 .RData
 .Ruserdata
-.Rapp.history
+.Rproj.user/
+
+# renv local library and binary cache (keep renv.lock and renv/activate.R tracked)
 renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
 renv/staging/
+.Rapp.history
 
 # Archivos de datos masivos y binarios (Se descargan por Zenodo)
 data/**/*.csv
@@ -36,13 +42,32 @@ data/test_data/prepared/
 data/test_data/models/
 data/test_data/results/
 
+# Temporary Quarto rendering artifacts (NOTE: *.qmd templates MUST be tracked!)
+*_files/
+*_cache/
+/.quarto/
+reporte_entrenamiento.html
+reporte_inferencia.html
+data/test_data/reporte_*.html
+data/test_data/prepared/
+data/test_data/models/
+data/test_data/results/
+
+# Downloaded archives and temporary files
+*.zip
+*.tar.gz
+*.tmp
+*~
+.DS_Store
+
+# Legacy non-versioned scripts
+archive/
+
 # Salidas locales
 results/*
 !results/.gitkeep
 *.html
 *.knit.md
-*.qmd
-#!training_report.qmd
 
 # Archivos del SO
 .DS_Store

@@ -1,0 +1,1499 @@
+---
+title: "TargetCNV-ML: Reporte de Entrenamiento y Evaluación de Modelos"
+subtitle: "Benchmark Multimétrica, Resumen de Matrices de Confusión y Diagnóstico Individual por Modelo"
+author: "TargetCNV-ML Pipeline"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Mostrar / Ocultar Código R"
+    embed-resources: true
+    fig-width: 10
+    fig-height: 6
+    df-print: paged
+params:
+  project_root: "."
+  models_dir: "models"
+  data_path: "data/data_prepared.rds"
+  data_file: "data/data_prepared.rds"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{css}
+.formula-box {
+  background-color: #f8f9fa;
+  border-left: 4px solid #2980b9;
+  padding: 14px 18px;
+  border-radius: 6px;
+  margin-top: 10px;
+  margin-bottom: 18px;
+}
+.asterisk-note {
+  background-color: #fef9e7;
+  border-left: 4px solid #f39c12;
+  padding: 11px 16px;
+  border-radius: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  font-size: 0.93rem;
+}
+.summary-btn {
+  display: inline-block;
+  background-color: #2c3e50;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 10px;
+}
+.summary-btn:hover {
+  background-color: #1a252f;
+}
+.model-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 14px;
+  color: white;
+  font-weight: bold;
+  font-size: 0.92rem;
+  margin-bottom: 12px;
+}
+.wf-controls {
+  background-color: #f4f6f7;
+  border: 1px solid #d5dbdb;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+}
+.wf-meta-card {
+  background-color: #ffffff;
+  border: 1px solid #dce1e5;
+  border-left: 5px solid #2980b9;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  font-size: 0.95rem;
+}
+.badge-tp {
+  background-color: #27ae60;
+  color: white;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: bold;
+}
+.badge-fp {
+  background-color: #c0392b;
+  color: white;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: bold;
+}
+```
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+  library(DT)
+  library(plotly)
+  library(cowplot)
+  library(caret)
+  library(pROC)
+  library(jsonlite)
+})
+
+proj_root <- params$project_root
+models_dir <- params$models_dir
+data_file <- if (!is.null(params$data_path) && file.exists(params$data_path)) {
+  params$data_path
+} else {
+  params$data_file
+}
+
+if (file.exists(file.path(proj_root, "R", "model_specs.R"))) {
+  source(file.path(proj_root, "R", "model_specs.R"))
+}
+if (file.exists(file.path(proj_root, "R", "plotting.R"))) {
+  source(file.path(proj_root, "R", "plotting.R"))
+}
+if (file.exists(file.path(proj_root, "R", "model_evaluation.R"))) {
+  source(file.path(proj_root, "R", "model_evaluation.R"))
+}
+
+if (!exists("normalize_model_names")) {
+  normalize_model_names <- function(mod_list) {
+    if (is.null(mod_list) || length(mod_list) == 0) return(mod_list)
+    if (is.character(mod_list)) {
+      mod_list[mod_list == "DNN_Profunda"]     <- "MLP"
+      mod_list[mod_list == "DNN_Regularizada"] <- "MLP_Regularizado"
+      mod_list[mod_list %in% c("DNN_Autoencoder", "Autoencoder", "SAE-DNN", "SAE_DNN")] <- "Stacked Autoencoder - DNN"
+      return(mod_list)
+    }
+    nms <- names(mod_list)
+    if (!is.null(nms)) {
+      nms[nms == "DNN_Profunda"]     <- "MLP"
+      nms[nms == "DNN_Regularizada"] <- "MLP_Regularizado"
+      nms[nms %in% c("DNN_Autoencoder", "Autoencoder", "SAE-DNN", "SAE_DNN")] <- "Stacked Autoencoder - DNN"
+      names(mod_list) <- nms
+      mod_list <- mod_list[!duplicated(names(mod_list))]
+    }
+    mod_list
+  }
+}
+
+# Calcula un indice global multimétrica con fuerte ponderación en el control de Falsos Descubrimientos (FDR):
+# Indice_Global_FDR = 0.45 * (1 - FDR) + 0.20 * F1_Score + 0.15 * MCC + 0.10 * Exactitud_Balanceada + 0.10 * ROC_AUC
+compute_global_fdr_score <- function(df_row) {
+  fdr_v  <- suppressWarnings(as.numeric(df_row$FDR[1]))
+  f1_v   <- suppressWarnings(as.numeric(df_row$F1_Score[1]))
+  mcc_v  <- suppressWarnings(as.numeric(df_row$MCC[1]))
+  bacc_v <- suppressWarnings(as.numeric(df_row$Exactitud_Balanceada[1]))
+  auc_v  <- suppressWarnings(as.numeric(df_row$ROC_AUC[1]))
+
+  if (length(fdr_v) == 0  || is.na(fdr_v))  fdr_v  <- 1.0
+  if (length(f1_v) == 0   || is.na(f1_v))   f1_v   <- 0.0
+  if (length(mcc_v) == 0  || is.na(mcc_v))  mcc_v  <- 0.0
+  if (length(bacc_v) == 0 || is.na(bacc_v)) bacc_v <- 0.0
+  if (length(auc_v) == 0  || is.na(auc_v))  auc_v  <- 0.0
+
+  0.45 * (1 - fdr_v) + 0.20 * f1_v + 0.15 * mcc_v + 0.10 * bacc_v + 0.10 * auc_v
+}
+
+fmt_fdr_pct <- function(val) {
+  if (length(val) == 0 || is.na(val)) "Sin pred. TP (NA)" else sprintf("%.2f%%", as.numeric(val) * 100)
+}
+
+# Formateador de tablas interactivas DataTables (exporta TODOS los modelos evaluados y señala con '*' cuando
+# la otra versión —Balanceado vs Desbalanceado— supera a la actual bajo criterio global con fuerte peso en FDR)
+format_benchmark_dt <- function(df,
+                                other_df = NULL,
+                                current_scen = "Balanceado",
+                                other_scen = "Desbalanceado",
+                                caption_text = NULL) {
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+
+  df_display <- df
+  base_models <- as.character(df_display$Modelo)
+  comp_notes  <- rep("Invariante (Regla fija)", nrow(df_display))
+  flagged_vec <- rep(FALSE, nrow(df_display))
+
+  has_other <- !is.null(other_df) && nrow(other_df) > 0 && "Modelo" %in% colnames(other_df)
+  other_models <- if (has_other) as.character(other_df$Modelo) else character(0)
+
+  if (has_other) {
+    for (i in seq_len(nrow(df_display))) {
+      m_name <- base_models[i]
+      if (!is.na(m_name) && !isTRUE(grepl("^Youden_", m_name)) && m_name != "Weighted_Heuristic" && m_name %in% other_models) {
+        row_curr  <- df[i, , drop = FALSE]
+        row_other <- other_df[which(other_models == m_name)[1], , drop = FALSE]
+
+        score_curr  <- compute_global_fdr_score(row_curr)
+        score_other <- compute_global_fdr_score(row_other)
+        fdr_curr    <- suppressWarnings(as.numeric(row_curr$FDR[1]))
+        fdr_other   <- suppressWarnings(as.numeric(row_other$FDR[1]))
+
+        curr_fdr_na  <- (length(fdr_curr) == 0 || is.na(fdr_curr))
+        other_fdr_na <- (length(fdr_other) == 0 || is.na(fdr_other))
+
+        # Determinar si la otra version es globalmente superior considerando fuertemente el FDR:
+        # Caso 1: En el escenario actual el modelo colapsó (0 predicciones TP -> FDR = NA) pero en el otro sí funciona
+        # Caso 2: Ambos tienen FDR válido y la otra versión tiene mejor Índice Global sin degradar FDR > 0.5%, o menor FDR manteniendo índice global
+        other_is_better <- FALSE
+        curr_is_better  <- FALSE
+
+        if (curr_fdr_na && !other_fdr_na) {
+          other_is_better <- TRUE
+        } else if (!curr_fdr_na && other_fdr_na) {
+          curr_is_better <- TRUE
+        } else if (!curr_fdr_na && !other_fdr_na) {
+          other_is_better <- isTRUE(
+            (score_other > score_curr + 1e-4 && fdr_other <= fdr_curr + 0.005) ||
+            (fdr_other < fdr_curr - 1e-4 && score_other >= score_curr - 0.002)
+          )
+          curr_is_better <- !other_is_better && isTRUE(
+            score_curr > score_other + 1e-4 || fdr_curr < fdr_other - 1e-4
+          )
+        } else {
+          other_is_better <- isTRUE(score_other > score_curr + 1e-4)
+          curr_is_better  <- isTRUE(score_curr > score_other + 1e-4)
+        }
+
+        if (isTRUE(other_is_better)) {
+          df_display$Modelo[i] <- paste0(m_name, " *")
+          flagged_vec[i] <- TRUE
+          comp_notes[i] <- sprintf(
+            "* Mejor en %s (FDR: %s vs %s | Índice: %.3f vs %.3f)",
+            other_scen, fmt_fdr_pct(fdr_other), fmt_fdr_pct(fdr_curr), score_other, score_curr
+          )
+        } else if (isTRUE(curr_is_better)) {
+          comp_notes[i] <- sprintf(
+            "Óptimo en %s (FDR: %s vs %s | Índice: %.3f vs %.3f)",
+            current_scen, fmt_fdr_pct(fdr_curr), fmt_fdr_pct(fdr_other), score_curr, score_other
+          )
+        } else {
+          comp_notes[i] <- sprintf(
+            "Equivalente en ambos (FDR: %s)",
+            fmt_fdr_pct(fdr_curr)
+          )
+        }
+      }
+    }
+  }
+
+  # Insertar columna explicativa de comparacion entre versiones justo despues de Modelo
+  df_display <- df_display %>%
+    dplyr::mutate(Mejor_Version_FDR = comp_notes, .after = "Modelo")
+
+  pct_cols <- intersect(
+    c("Exactitud", "Exactitud_Balanceada", "Sensibilidad", "Especificidad", "Precision", "VPN", "FDR"),
+    colnames(df_display)
+  )
+  dec_cols <- intersect(
+    c("F1_Score", "MCC", "Kappa", "ROC_AUC", "Umbral", "Indice_Youden_J"),
+    colnames(df_display)
+  )
+
+  for (col in pct_cols) {
+    df_display[[col]] <- round(as.numeric(df_display[[col]]) * 100, 2)
+  }
+  for (col in dec_cols) {
+    df_display[[col]] <- round(as.numeric(df_display[[col]]), 3)
+  }
+
+  dt <- DT::datatable(
+    df_display,
+    rownames = FALSE,
+    caption = caption_text,
+    extensions = "Buttons",
+    options = list(
+      pageLength = 50,
+      lengthMenu = c(10, 25, 50, 100),
+      scrollX = TRUE,
+      dom = "Bfrtip",
+      buttons = list(
+        list(extend = "copy",  text = "Copiar Tabla",   exportOptions = list(modifier = list(page = "all"))),
+        list(extend = "csv",   text = "Exportar CSV",   exportOptions = list(modifier = list(page = "all"))),
+        list(extend = "excel", text = "Exportar Excel", exportOptions = list(modifier = list(page = "all")))
+      ),
+      language = list(
+        search = "Filtrar modelo:",
+        zeroRecords = "No se encontraron registros",
+        emptyTable = "Sin datos"
+      )
+    )
+  )
+
+  if (length(pct_cols) > 0) {
+    dt <- dt %>% DT::formatCurrency(columns = pct_cols, currency = "%", before = FALSE, digits = 2)
+  }
+  if (length(dec_cols) > 0) {
+    dt <- dt %>% DT::formatRound(columns = dec_cols, digits = 3)
+  }
+  if (any(flagged_vec)) {
+    flagged_names <- df_display$Modelo[flagged_vec]
+    dt <- dt %>% DT::formatStyle(
+      "Modelo",
+      color = DT::styleEqual(flagged_names, rep("#b9770e", length(flagged_names))),
+      backgroundColor = DT::styleEqual(flagged_names, rep("#fef9e7", length(flagged_names))),
+      fontWeight = DT::styleEqual(flagged_names, rep("bold", length(flagged_names)))
+    )
+  }
+  if ("F1_Score" %in% colnames(df_display)) {
+    dt <- dt %>% DT::formatStyle(
+      "F1_Score",
+      background = DT::styleColorBar(c(0, 1), "#a9cce3"),
+      backgroundSize = "95% 75%",
+      backgroundRepeat = "no-repeat",
+      backgroundPosition = "center",
+      fontWeight = "bold"
+    )
+  }
+  if ("ROC_AUC" %in% colnames(df_display)) {
+    dt <- dt %>% DT::formatStyle(
+      "ROC_AUC",
+      background = DT::styleColorBar(c(0, 1), "#a3e4d7"),
+      backgroundSize = "95% 75%",
+      backgroundRepeat = "no-repeat",
+      backgroundPosition = "center"
+    )
+  }
+  return(dt)
+}
+
+# Selecciona los 6 modelos clave (Top 2 Youden + Heuristico + Top 3 ML sin Ensamble_Stacking)
+# y los ordena de mayor a menor ROC-AUC
+get_top6_summary_models <- function(bench_df) {
+  if (is.null(bench_df) || nrow(bench_df) == 0) return(character(0))
+
+  top2_youden <- bench_df %>%
+    dplyr::filter(grepl("^Youden_", Modelo)) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::slice_head(n = 2) %>%
+    dplyr::pull(Modelo)
+
+  heur_name <- intersect("Weighted_Heuristic", bench_df$Modelo)
+
+  top3_ml <- bench_df %>%
+    dplyr::filter(!grepl("^Youden_", Modelo) & !Modelo %in% c("Weighted_Heuristic", "Ensamble_Stacking")) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::slice_head(n = 3) %>%
+    dplyr::pull(Modelo)
+
+  selected_6 <- unique(c(top2_youden, heur_name, top3_ml))
+
+  # Si por alguna razon hubiera menos de 6 (ej. sin Youden), completar hasta 6 con los mejores ROC-AUC sin Ensamble_Stacking
+  if (length(selected_6) < 6) {
+    extra_models <- bench_df %>%
+      dplyr::filter(!Modelo %in% c(selected_6, "Ensamble_Stacking")) %>%
+      dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+      dplyr::pull(Modelo)
+    selected_6 <- unique(c(selected_6, extra_models))[seq_len(min(6L, length(unique(c(selected_6, extra_models)))))]
+  }
+
+  bench_df %>%
+    dplyr::filter(Modelo %in% selected_6) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::pull(Modelo)
+}
+
+# Constructor de grafico Plotly vertical ordenado de arriba a abajo del mejor al peor ROC-AUC
+build_interactive_benchmark_plotly <- function(df_bench,
+                                               scenario_title = "Escenario Balanceado",
+                                               view_label = "6 Modelos Clave") {
+  if (is.null(df_bench) || nrow(df_bench) == 0) return(NULL)
+
+  metrics_info <- list(
+    list(col = "ROC_AUC",              label = "ROC-AUC",              color = "#27ae60"),
+    list(col = "F1_Score",             label = "F1-Score",             color = "#2980b9"),
+    list(col = "Exactitud_Balanceada", label = "Exactitud Balanceada", color = "#8e44ad"),
+    list(col = "Exactitud",            label = "Exactitud (Accuracy)", color = "#16a085"),
+    list(col = "Sensibilidad",         label = "Sensibilidad (TPR)",   color = "#d35400"),
+    list(col = "Especificidad",        label = "Especificidad (TNR)",  color = "#2c3e50"),
+    list(col = "Precision",            label = "Precisión (PPV)",      color = "#f39c12"),
+    list(col = "FDR",                  label = "FDR (Falsos Pos.)",    color = "#c0392b"),
+    list(col = "MCC",                  label = "MCC (Matthews)",       color = "#7f8c8d")
+  )
+
+  avail_info <- Filter(function(m) m$col %in% colnames(df_bench), metrics_info)
+  if (length(avail_info) == 0) return(NULL)
+
+  # Ordenar de mejor ROC-AUC (arriba) a peor ROC-AUC (abajo)
+  df_best_to_worst <- df_bench %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+
+  # En Plotly horizontal (orientation = "h"), el ultimo nivel de categoryarray se dibuja arriba y el primero abajo
+  y_levels_bottom_to_top <- rev(unique(as.character(df_best_to_worst$Modelo)))
+  df_sorted <- df_best_to_worst %>%
+    dplyr::mutate(Modelo = factor(as.character(Modelo), levels = y_levels_bottom_to_top))
+
+  n_models <- nrow(df_sorted)
+  dynamic_height <- if (n_models <= 6) 560 else max(950, n_models * 85)
+
+  fig <- plotly::plot_ly(height = dynamic_height)
+  n_m <- length(avail_info)
+
+  for (m in avail_info) {
+    vals <- round(as.numeric(df_sorted[[m$col]]), 3)
+    fig <- fig %>%
+      plotly::add_trace(
+        y = df_sorted$Modelo,
+        x = vals,
+        name = m$label,
+        type = "bar",
+        orientation = "h",
+        marker = list(color = m$color),
+        text = sprintf("%.3f", vals),
+        textposition = "auto",
+        hovertemplate = paste0("<b>%{y}</b><br>", m$label, ": %{x:.3f}<extra></extra>")
+      )
+  }
+
+  buttons_list <- list(
+    list(
+      method = "restyle",
+      args = list("visible", as.list(rep(TRUE, n_m))),
+      label = "Vista General (Todas las Métricas)"
+    ),
+    list(
+      method = "restyle",
+      args = list("visible", as.list(sapply(avail_info, function(x) x$col %in% c("F1_Score", "ROC_AUC", "Exactitud", "Precision", "Sensibilidad", "Especificidad", "FDR")))),
+      label = "7 Métricas Clásicas"
+    )
+  )
+
+  for (i in seq_len(n_m)) {
+    vis_vec <- rep(FALSE, n_m)
+    vis_vec[i] <- TRUE
+    buttons_list[[length(buttons_list) + 1]] <- list(
+      method = "restyle",
+      args = list("visible", as.list(vis_vec)),
+      label = paste("Solo:", avail_info[[i]]$label)
+    )
+  }
+
+  fig <- fig %>%
+    plotly::layout(
+      title = list(
+        text = paste0(
+          "<b>Benchmark (", view_label, " — Ordenado de Mayor a Menor ROC-AUC) — ", scenario_title, "</b><br>",
+          "<sup>Usa el botón desplegable para elegir métricas o haz clic en la leyenda inferior para activar/desactivar varias métricas</sup>"
+        ),
+        x = 0.5
+      ),
+      barmode = "group",
+      bargap = 0.24,
+      bargroupgap = 0.08,
+      xaxis = list(title = "Puntaje (0 a 1)", range = c(0, 1.08), tickfont = list(size = 12)),
+      yaxis = list(
+        title = "",
+        tickfont = list(size = 12),
+        categoryorder = "array",
+        categoryarray = y_levels_bottom_to_top
+      ),
+      legend = list(orientation = "h", y = -0.08, x = 0.5, xanchor = "center", font = list(size = 11)),
+      margin = list(l = 195, r = 35, t = 95, b = 105),
+      updatemenus = list(
+        list(
+          type = "dropdown",
+          active = 0,
+          x = 0.0,
+          y = 1.08,
+          xanchor = "left",
+          yanchor = "top",
+          buttons = buttons_list
+        )
+      )
+    )
+
+  return(fig)
+}
+
+# Carga de datos y artefactos
+datos <- if (file.exists(data_file)) {
+  if (grepl("\\.rds$", data_file, ignore.case = TRUE)) readRDS(data_file) else read.delim(data_file)
+} else {
+  NULL
+}
+
+df_ml_report <- if (!is.null(datos) && "Validacion_Espacial" %in% colnames(datos)) {
+  pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(datos))
+  datos %>%
+    dplyr::filter(!is.na(Validacion_Espacial)) %>%
+    dplyr::mutate(
+      Clase = factor(ifelse(Validacion_Espacial %in% c("TRUE_POSITIVE", "TP"), "TP", "FP"), levels = c("TP", "FP")),
+      dplyr::across(dplyr::all_of(pred_cols), ~ as.numeric(as.character(.x)))
+    ) %>%
+    dplyr::filter(stats::complete.cases(dplyr::select(., dplyr::all_of(pred_cols)))) %>%
+    dplyr::mutate(Fila_ID = dplyr::row_number()) %>%
+    as.data.frame()
+} else {
+  NULL
+}
+
+models_bal <- if (file.exists(file.path(models_dir, "models_balanced.rds"))) {
+  readRDS(file.path(models_dir, "models_balanced.rds"))
+} else if (file.exists(file.path(models_dir, "all_trained_models.rds"))) {
+  readRDS(file.path(models_dir, "all_trained_models.rds"))
+} else {
+  list()
+}
+
+models_unbal <- if (file.exists(file.path(models_dir, "models_unbalanced.rds"))) {
+  readRDS(file.path(models_dir, "models_unbalanced.rds"))
+} else {
+  list()
+}
+
+# Garantizar que SIEMPRE esten presentes todos los 18 clasificadores ML + Ensamble_Stacking
+# (si models/ provenia de Zenodo o de una corrida rapida de 5 modelos, entrena los faltantes usando R/model_specs.R)
+ensure_complete_tournament_models <- function(existing_list, df_train, sampling_mode = "down", target_rds_path = NULL) {
+  existing_list <- normalize_model_names(existing_list)
+  if (is.null(df_train) || nrow(df_train) < 10 || !exists("get_model_specs")) return(existing_list)
+
+  specs <- get_model_specs(n_obs = nrow(df_train), extended = TRUE)
+  missing_names <- setdiff(names(specs), names(existing_list))
+
+  if (length(missing_names) == 0 && "Ensamble_Stacking" %in% names(existing_list)) {
+    return(existing_list)
+  }
+
+  pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(df_train))
+  x_tr <- df_train[, pred_cols, drop = FALSE]
+  y_tr <- df_train$Clase
+
+  ctrl <- caret::trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = caret::twoClassSummary,
+    savePredictions = "final",
+    sampling = sampling_mode
+  )
+
+  for (m_name in missing_names) {
+    cfg <- specs[[m_name]]
+    set.seed(1234)
+    args_list <- list(
+      x = x_tr,
+      y = y_tr,
+      method = cfg$method,
+      metric = "ROC",
+      trControl = ctrl
+    )
+    if (!isTRUE(cfg$no_scale))   args_list$preProcess <- c("center", "scale")
+    if (!is.null(cfg$tuneLength)) args_list$tuneLength <- cfg$tuneLength
+    if (!is.null(cfg$tuneGrid))   args_list$tuneGrid   <- cfg$tuneGrid
+    if (!is.null(cfg$trace))      args_list$trace      <- cfg$trace
+    if (!is.null(cfg$MaxNWts))    args_list$MaxNWts    <- cfg$MaxNWts
+    if (!is.null(cfg$verbose))    args_list$verbose    <- cfg$verbose
+    if (!is.null(cfg$nthread))    args_list$nthread    <- cfg$nthread
+
+    fit_m <- tryCatch(
+      suppressWarnings(capture.output(res_m <- do.call(caret::train, args_list))),
+      error = function(e) NULL
+    )
+    if (exists("res_m") && !is.null(res_m)) {
+      existing_list[[m_name]] <- res_m
+      rm(res_m)
+    }
+  }
+
+  if (!"Ensamble_Stacking" %in% names(existing_list) && requireNamespace("caretEnsemble", quietly = TRUE)) {
+    stack_fit <- tryCatch({
+      aucs <- sapply(existing_list, function(m) {
+        if (!inherits(m, "train") || is.null(m$pred) || !"TP" %in% colnames(m$pred)) return(NA_real_)
+        as.numeric(pROC::auc(pROC::roc(response = m$pred$obs, predictor = m$pred$TP, levels = c("FP", "TP"), direction = "<", quiet = TRUE)))
+      })
+      valid_m <- names(sort(aucs[!is.na(aucs)], decreasing = TRUE))
+      if (length(valid_m) >= 2) {
+        set.seed(1234)
+        ctrl_s <- caret::trainControl(
+          method = "cv",
+          number = 5,
+          savePredictions = "final",
+          classProbs = TRUE,
+          summaryFunction = caret::twoClassSummary,
+          sampling = sampling_mode
+        )
+        m_list_s <- caretEnsemble::caretList(
+          x = x_tr,
+          y = y_tr,
+          trControl = ctrl_s,
+          methodList = c("svmPoly", "glmnet"),
+          preProcess = c("center", "scale")
+        )
+        caretEnsemble::caretStack(
+          m_list_s,
+          method = "glm",
+          metric = "ROC",
+          trControl = caret::trainControl(method = "cv", number = 5, classProbs = TRUE, summaryFunction = caret::twoClassSummary)
+        )
+      } else {
+        NULL
+      }
+    }, error = function(e) NULL)
+
+    if (!is.null(stack_fit)) {
+      existing_list[["Ensamble_Stacking"]] <- stack_fit
+    }
+  }
+
+  ordered_keys <- intersect(c(names(specs), "Ensamble_Stacking"), names(existing_list))
+  existing_list <- existing_list[ordered_keys]
+
+  if (!is.null(target_rds_path) && dir.exists(dirname(target_rds_path))) {
+    tryCatch(saveRDS(existing_list, target_rds_path), error = function(e) {})
+  }
+  return(existing_list)
+}
+
+models_bal   <- ensure_complete_tournament_models(models_bal,   df_ml_report, sampling_mode = "down", target_rds_path = file.path(models_dir, "models_balanced.rds"))
+models_unbal <- ensure_complete_tournament_models(models_unbal, df_ml_report, sampling_mode = NULL,   target_rds_path = file.path(models_dir, "models_unbalanced.rds"))
+
+youden_thresholds <- if (file.exists(file.path(models_dir, "youden_thresholds.rds"))) {
+  readRDS(file.path(models_dir, "youden_thresholds.rds"))
+} else {
+  NULL
+}
+
+heuristic_model <- if (file.exists(file.path(models_dir, "heuristic_model.rds"))) {
+  readRDS(file.path(models_dir, "heuristic_model.rds"))
+} else {
+  NULL
+}
+
+bench_youden <- if (file.exists(file.path(models_dir, "youden_benchmark.rds"))) {
+  readRDS(file.path(models_dir, "youden_benchmark.rds"))
+} else {
+  NULL
+}
+
+cm_list <- if (file.exists(file.path(models_dir, "confusion_matrices.rds"))) {
+  readRDS(file.path(models_dir, "confusion_matrices.rds"))
+} else {
+  list()
+}
+
+shap_obj_bal <- if (file.exists(file.path(models_dir, "shap_values_balanced.rds"))) {
+  readRDS(file.path(models_dir, "shap_values_balanced.rds"))
+} else if (file.exists(file.path(models_dir, "shap_values.rds"))) {
+  readRDS(file.path(models_dir, "shap_values.rds"))
+} else {
+  NULL
+}
+
+# Construye la tabla completa de 24 modelos (Heuristico + 18 ML + Ensamble_Stacking + 4 Cortes Youden)
+build_complete_scenario_results <- function(models_list, scenario_key = "balanced") {
+  bench_rds_file <- file.path(models_dir, sprintf("benchmark_models_%s.rds", scenario_key))
+  bench_tsv_file <- file.path(models_dir, sprintf("benchmark_models_%s.tsv", scenario_key))
+  saved_bench <- if (file.exists(bench_rds_file)) {
+    readRDS(bench_rds_file)
+  } else if (file.exists(bench_tsv_file)) {
+    utils::read.delim(bench_tsv_file, stringsAsFactors = FALSE)
+  } else if (scenario_key == "balanced" && file.exists(file.path(models_dir, "benchmark_models.rds"))) {
+    readRDS(file.path(models_dir, "benchmark_models.rds"))
+  } else {
+    NULL
+  }
+  if (!is.null(saved_bench) && "Modelo" %in% colnames(saved_bench)) {
+    saved_bench$Modelo <- normalize_model_names(as.character(saved_bench$Modelo))
+  }
+
+  pred_cols <- if (!is.null(df_ml_report)) intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(df_ml_report)) else character(0)
+  x_tr <- if (!is.null(df_ml_report)) df_ml_report[, pred_cols, drop = FALSE] else NULL
+  y_tr <- if (!is.null(df_ml_report)) df_ml_report$Clase else NULL
+
+  rows <- list()
+  cms  <- list()
+
+  # 1. Modelo Heuristico Ponderado
+  if (!is.null(heuristic_model) && !is.null(youden_thresholds) && !is.null(x_tr)) {
+    m_names <- names(heuristic_model$weights)
+    v_mat <- sapply(m_names, function(m) as.numeric(x_tr[[m]] >= youden_thresholds[[m]]))
+    scores_h <- as.vector(v_mat %*% heuristic_model$weights)
+    pred_h <- factor(ifelse(scores_h >= heuristic_model$global_threshold, "TP", "FP"), levels = c("TP", "FP"))
+    rows[["Weighted_Heuristic"]] <- compute_classification_metrics(
+      pred = pred_h, obs = y_tr, score = scores_h, positive_class = "TP", model_name = "Weighted_Heuristic"
+    )
+    cms[["Weighted_Heuristic"]] <- table(Prediccion = pred_h, Referencia = y_tr)
+  } else if (!is.null(cm_list$heuristic)) {
+    cms[["Weighted_Heuristic"]] <- cm_list$heuristic
+  }
+
+  # 2. Todos los modelos de Machine Learning (18 algoritmos + Ensamble_Stacking)
+  if (!is.null(models_list) && length(models_list) > 0) {
+    for (m_name in names(models_list)) {
+      mod_obj <- models_list[[m_name]]
+      if (inherits(mod_obj, "caretStack") && !is.null(x_tr)) {
+        base_mods <- mod_obj$models
+        prob_base <- as.data.frame(lapply(base_mods, function(bm) stats::predict(bm, newdata = x_tr, type = "prob")[["TP"]]))
+        colnames(prob_base) <- names(base_mods)
+        probs_s <- stats::predict(mod_obj$ens_model, newdata = prob_base, type = "prob")[["TP"]]
+        preds_s <- factor(ifelse(probs_s >= 0.5, "TP", "FP"), levels = c("TP", "FP"))
+        rows[[m_name]] <- compute_classification_metrics(
+          pred = preds_s, obs = y_tr, score = probs_s, positive_class = "TP", model_name = m_name
+        )
+        cms[[m_name]] <- table(Prediccion = preds_s, Referencia = y_tr)
+      } else if (!is.null(mod_obj$pred) && nrow(mod_obj$pred) > 0) {
+        p_df <- mod_obj$pred
+        score_tp <- if ("TP" %in% colnames(p_df)) p_df$TP else NULL
+        rows[[m_name]] <- compute_classification_metrics(
+          pred = p_df$pred, obs = p_df$obs, score = score_tp, positive_class = "TP", model_name = m_name
+        )
+        cms[[m_name]] <- table(
+          Prediccion = factor(p_df$pred, levels = c("TP", "FP")),
+          Referencia = factor(p_df$obs,  levels = c("TP", "FP"))
+        )
+      } else if (!is.null(x_tr)) {
+        pred_c <- stats::predict(mod_obj, newdata = x_tr)
+        prob_c <- tryCatch(stats::predict(mod_obj, newdata = x_tr, type = "prob")[["TP"]], error = function(e) NULL)
+        rows[[m_name]] <- compute_classification_metrics(
+          pred = pred_c, obs = y_tr, score = prob_c, positive_class = "TP", model_name = m_name
+        )
+        cms[[m_name]] <- table(
+          Prediccion = factor(pred_c, levels = c("TP", "FP")),
+          Referencia = y_tr
+        )
+      }
+    }
+  }
+
+  # 3. Los 4 Cortes Univariados de Youden
+  if (!is.null(youden_thresholds) && !is.null(x_tr)) {
+    for (y_var in names(youden_thresholds)) {
+      m_label <- paste0("Youden_", y_var)
+      pred_y <- factor(ifelse(x_tr[[y_var]] >= youden_thresholds[[y_var]], "TP", "FP"), levels = c("TP", "FP"))
+      rows[[m_label]] <- compute_classification_metrics(
+        pred = pred_y, obs = y_tr, score = x_tr[[y_var]], positive_class = "TP", model_name = m_label
+      )
+      cms[[m_label]] <- table(Prediccion = pred_y, Referencia = y_tr)
+    }
+  }
+
+  # Integrar matrices guardadas en confusion_matrices.rds
+  if (!is.null(cm_list[[scenario_key]])) {
+    saved_cms <- normalize_model_names(cm_list[[scenario_key]])
+    for (nm in names(saved_cms)) {
+      if (is.null(cms[[nm]])) cms[[nm]] <- saved_cms[[nm]]
+    }
+  }
+  if (!is.null(cm_list$youden)) {
+    for (yv in names(cm_list$youden)) {
+      ylbl <- paste0("Youden_", yv)
+      if (is.null(cms[[ylbl]])) cms[[ylbl]] <- cm_list$youden[[yv]]
+    }
+  }
+
+  # Combinar las filas calculadas de todos los modelos (incluyendo Youden, Heuristico y los 18 ML + Stacking)
+  # con cualquier fila previamente guardada en benchmark_models_*.rds
+  df_rows <- dplyr::bind_rows(rows)
+  df_bench_out <- if (!is.null(saved_bench) && nrow(saved_bench) > 0) {
+    dplyr::bind_rows(df_rows, saved_bench) %>%
+      dplyr::filter(!is.na(Modelo) & nzchar(as.character(Modelo))) %>%
+      dplyr::distinct(Modelo, .keep_all = TRUE) %>%
+      dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+  } else {
+    df_rows %>%
+      dplyr::filter(!is.na(Modelo) & nzchar(as.character(Modelo))) %>%
+      dplyr::distinct(Modelo, .keep_all = TRUE) %>%
+      dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+  }
+
+  # Persistir tabla completa si faltaban modelos en el archivo previo
+  if (is.null(saved_bench) || nrow(df_bench_out) > nrow(saved_bench)) {
+    tryCatch({
+      saveRDS(df_bench_out, bench_rds_file)
+      utils::write.table(df_bench_out, bench_tsv_file, sep = "\t", row.names = FALSE, quote = FALSE)
+    }, error = function(e) {})
+  }
+
+  # Alinear cms al conjunto completo de modelos
+  cms <- cms[intersect(df_bench_out$Modelo, names(cms))]
+
+  list(benchmark = df_bench_out, cms = cms)
+}
+
+scen_bal   <- build_complete_scenario_results(models_bal,   "balanced")
+scen_unbal <- build_complete_scenario_results(models_unbal, "unbalanced")
+
+bench_bal_full   <- scen_bal$benchmark
+bench_unbal_full <- scen_unbal$benchmark
+cms_bal_full     <- scen_bal$cms
+cms_unbal_full   <- scen_unbal$cms
+
+# Funcion que grafica el Resumen Simplificado de 6 Matrices:
+# - Los 2 mejores cortes de Youden
+# - El Modelo Heuristico Ponderado
+# - Los 3 mejores modelos de Machine Learning del escenario activo
+render_top6_summary_cms_grid <- function(scenario = c("balanced", "unbalanced")) {
+  scenario <- match.arg(scenario)
+  bench_df <- if (scenario == "balanced") bench_bal_full else bench_unbal_full
+  all_cms  <- if (scenario == "balanced") cms_bal_full else cms_unbal_full
+  scen_txt <- if (scenario == "balanced") "Escenario Balanceado" else "Escenario Desbalanceado"
+
+  if (is.null(bench_df) || length(all_cms) == 0) {
+    cat("> *No hay matrices de confusión disponibles para este escenario.*\n")
+    return(invisible(NULL))
+  }
+
+  # Seleccionar los mismos 6 modelos clave (Top 2 Youden + Heuristico + Top 3 ML sin Ensamble_Stacking) ordenados por ROC-AUC
+  selected_6 <- get_top6_summary_models(bench_df)
+  selected_6 <- intersect(selected_6, names(all_cms))
+
+  plot_list <- lapply(selected_6, function(m_name) {
+    tab_m <- all_cms[[m_name]]
+    pal   <- get_model_color_palette(m_name)
+    acc_m <- sum(diag(tab_m)) / sum(tab_m)
+    row_i <- bench_df %>% dplyr::filter(Modelo == m_name)
+    role_prefix <- if (grepl("^Youden_", m_name)) {
+      "Top Youden: "
+    } else if (m_name == "Weighted_Heuristic") {
+      "Heurístico: "
+    } else {
+      "Top ML: "
+    }
+    sub_txt <- if (nrow(row_i) > 0) {
+      sprintf("ROC-AUC: %.3f | F1: %.3f | Acc: %.1f%% | FDR: %.1f%%", row_i$ROC_AUC[1], row_i$F1_Score[1], acc_m * 100, row_i$FDR[1] * 100)
+    } else {
+      sprintf("Exactitud: %.1f%%", acc_m * 100)
+    }
+    plot_confusion_matrix(
+      tab_m,
+      title = paste0(role_prefix, m_name),
+      subtitle = sub_txt,
+      high_color = pal$high,
+      low_color = pal$low
+    )
+  })
+
+  title_banner <- cowplot::ggdraw() +
+    cowplot::draw_label(
+      sprintf("Resumen de Matrices Clave (%s): Top 2 Youden + Heurístico + Top 3 ML", scen_txt),
+      fontface = "bold",
+      size = 13.5,
+      color = "#2c3e50"
+    )
+  grid_body <- cowplot::plot_grid(plotlist = plot_list, ncol = 2, align = "hv")
+  print(cowplot::plot_grid(title_banner, grid_body, ncol = 1, rel_heights = c(0.06, 1)))
+}
+
+# Funcion que renderiza la pestaña individual de un modelo (Matriz + Importancia + Arquitectura/Detalles)
+render_single_model_diagnostics <- function(mod_name, scenario = c("balanced", "unbalanced")) {
+  scenario    <- match.arg(scenario)
+  models_list <- if (scenario == "balanced") models_bal else models_unbal
+  bench_df    <- if (scenario == "balanced") bench_bal_full else bench_unbal_full
+  all_cms     <- if (scenario == "balanced") cms_bal_full else cms_unbal_full
+  pal         <- get_model_color_palette(mod_name)
+  scen_label  <- if (scenario == "balanced") "Escenario Balanceado" else "Escenario Desbalanceado"
+
+  row_m <- if (!is.null(bench_df)) bench_df %>% dplyr::filter(Modelo == mod_name) else NULL
+  if (!is.null(row_m) && nrow(row_m) > 0) {
+    cat(sprintf(
+      "<div class='model-badge' style='background-color:%s;'>%s (%s) — F1: %.3f | ROC-AUC: %.3f | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %.2f%% | FDR: %.2f%%</div>\n\n",
+      pal$high, mod_name, scen_label,
+      row_m$F1_Score[1], row_m$ROC_AUC[1],
+      row_m$Exactitud_Balanceada[1] * 100,
+      row_m$Sensibilidad[1] * 100,
+      row_m$Especificidad[1] * 100,
+      row_m$Precision[1] * 100,
+      row_m$FDR[1] * 100
+    ))
+  }
+
+  tab_cm <- all_cms[[mod_name]]
+  p_cm <- if (!is.null(tab_cm)) {
+    acc_val <- sum(diag(tab_cm)) / sum(tab_cm)
+    plot_confusion_matrix(
+      tab_cm,
+      title = paste("Matriz de Confusión:", mod_name),
+      subtitle = sprintf("%s (Exactitud: %.2f%%)", scen_label, acc_val * 100),
+      high_color = pal$high,
+      low_color = pal$low
+    )
+  } else {
+    NULL
+  }
+
+  p_imp <- NULL
+  if (!is.null(models_list) && mod_name %in% names(models_list)) {
+    mod_obj <- models_list[[mod_name]]
+    if (inherits(mod_obj, "caretStack")) {
+      coefs_s <- tryCatch(stats::coef(mod_obj$ens_model$finalModel), error = function(e) NULL)
+      if (!is.null(coefs_s) && length(coefs_s) > 1) {
+        w_s <- abs(coefs_s[-1])
+        p_imp <- plot_model_varimp(
+          model_obj = w_s,
+          model_name = paste0("Pesos Meta-Modelo (", scen_label, ")"),
+          high_color = pal$high
+        )
+      }
+    } else {
+      p_imp <- plot_model_varimp(
+        model_obj = mod_obj,
+        df_data = df_ml_report,
+        model_name = paste0(mod_name, " (", scen_label, ")"),
+        high_color = pal$high
+      )
+    }
+  } else if (mod_name == "Weighted_Heuristic" && !is.null(heuristic_model)) {
+    p_imp <- plot_model_varimp(
+      model_obj = heuristic_model$weights,
+      model_name = "Pesos del Modelo Heurístico",
+      high_color = pal$high
+    )
+  } else if (grepl("^Youden_", mod_name) && !is.null(youden_thresholds)) {
+    var_y <- sub("^Youden_", "", mod_name)
+    vec_y <- setNames(ifelse(names(youden_thresholds) == var_y, 100, 0), names(youden_thresholds))
+    p_imp <- plot_model_varimp(
+      model_obj = vec_y,
+      model_name = paste0("Variable Activa: ", var_y, " (Corte >= ", round(youden_thresholds[[var_y]], 2), ")"),
+      high_color = pal$high
+    )
+  }
+
+  if (!is.null(p_cm) && !is.null(p_imp)) {
+    print(cowplot::plot_grid(p_cm, p_imp, ncol = 2, align = "h"))
+  } else if (!is.null(p_cm)) {
+    print(p_cm)
+  } else if (!is.null(p_imp)) {
+    print(p_imp)
+  }
+}
+
+# Funcion que imprime la arquitectura y parametros claros de cada modelo
+render_single_model_extra <- function(mod_name, scenario = c("balanced", "unbalanced")) {
+  scenario    <- match.arg(scenario)
+  models_list <- if (scenario == "balanced") models_bal else models_unbal
+  scen_label  <- if (scenario == "balanced") "Escenario Balanceado" else "Escenario Desbalanceado"
+
+  if (is.null(models_list) || !mod_name %in% names(models_list)) return(invisible(NULL))
+  mod_obj <- models_list[[mod_name]]
+
+  # Redes Neuronales y Autoencoder: dibujar siempre su arquitectura (nnet, avNNet, MLP, MLP_Regularizado, Autoencoder)
+  if (mod_name %in% c("Red_Neuronal", "Red_Neuronal_Bag", "MLP", "MLP_Regularizado", "Stacked Autoencoder - DNN", "Autoencoder") && !is.null(mod_obj$finalModel)) {
+    plot_neural_net_topology(
+      mod_obj,
+      title = sprintf("Arquitectura de Red: %s (%s)", mod_name, scen_label)
+    )
+  } else if (mod_name == "CART" && requireNamespace("rpart.plot", quietly = TRUE) && !is.null(mod_obj$finalModel)) {
+    tryCatch({
+      rpart.plot::rpart.plot(
+        mod_obj$finalModel,
+        type = 3, extra = 104, under = TRUE, faclen = 0, cex = 0.85,
+        main = sprintf("Árbol de Decisión CART (%s)", scen_label),
+        box.palette = c("#27ae60", "#e74c3c")
+      )
+    }, error = function(e) {})
+  }
+
+  # Impresion clara de parametros y estructura segun el tipo de modelo
+  if (mod_name == "Red_Neuronal_Bag" && !is.null(mod_obj$finalModel)) {
+    n_nets <- if (!is.null(mod_obj$finalModel$model)) length(mod_obj$finalModel$model) else NA
+    topo_str <- if (!is.null(mod_obj$finalModel$model[[1]]$n)) paste(mod_obj$finalModel$model[[1]]$n, collapse = " - ") else "4 - size - 1"
+    n_wts <- if (!is.null(mod_obj$finalModel$model[[1]]$wts)) length(mod_obj$finalModel$model[[1]]$wts) else NA
+    cat(sprintf("Parámetros y Arquitectura de Red_Neuronal_Bag (avNNet — %s):\n", scen_label))
+    cat(sprintf("  • Número de sub-redes promediadas (repeats) : %s\n", as.character(n_nets)))
+    cat(sprintf("  • Topología de cada sub-red (I - H - O)     : %s nodos (%s conexiones/pesos por red)\n", topo_str, as.character(n_wts)))
+    cat(sprintf("  • Neuronas en capa oculta (size)            : %s\n", as.character(mod_obj$bestTune$size)))
+    cat(sprintf("  • Regularización L2 (decay)                 : %.4g\n", as.numeric(mod_obj$bestTune$decay)))
+    cat(sprintf("  • Muestreo Bootstrap (bag)                  : %s\n", as.character(mod_obj$bestTune$bag)))
+  } else if (mod_name == "Red_Neuronal" && !is.null(mod_obj$finalModel)) {
+    topo_str <- if (!is.null(mod_obj$finalModel$n)) paste(mod_obj$finalModel$n, collapse = " - ") else "4 - size - 1"
+    cat(sprintf("Parámetros y Arquitectura de Red_Neuronal (nnet — %s):\n", scen_label))
+    cat(sprintf("  • Topología del Perceptrón (I - H - O) : %s nodos\n", topo_str))
+    cat(sprintf("  • Neuronas en capa oculta (size)       : %s\n", as.character(mod_obj$bestTune$size)))
+    cat(sprintf("  • Regularización L2 (decay)            : %.4g\n\n", as.numeric(mod_obj$bestTune$decay)))
+    print(summary(mod_obj$finalModel))
+  } else if (mod_name %in% c("MLP", "MLP_Regularizado") && !is.null(mod_obj$bestTune)) {
+    bt <- mod_obj$bestTune
+    cat(sprintf("Parámetros y Arquitectura del Perceptrón Multicapa (%s — %s):\n", mod_name, scen_label))
+    cat(sprintf("  • Capa de Entrada             : 4 variables (pct_recovered, pct_identity, score, wscore)\n"))
+    cat(sprintf("  • Capas Ocultas (L1 - L2 - L3): %s - %s - %s neuronas\n",
+                as.character(bt$layer1), as.character(bt$layer2), as.character(bt$layer3)))
+    if ("decay" %in% colnames(bt)) {
+      cat(sprintf("  • Regularización (Weight Decay): %.4g\n", as.numeric(bt$decay)))
+    }
+    cat("  • Capa de Salida              : 2 clases (TP / FP)\n")
+  } else if (mod_name %in% c("Stacked Autoencoder - DNN", "Autoencoder") && !is.null(mod_obj$bestTune)) {
+    bt <- mod_obj$bestTune
+    cat(sprintf("Parámetros y Arquitectura de Stacked Autoencoder - DNN (%s):\n", scen_label))
+    cat(sprintf("  • Capa de Entrada             : 4 variables\n"))
+    cat(sprintf("  • Capas Ocultas (L1 - L2 - L3): %s - %s - %s neuronas\n",
+                as.character(bt$layer1), as.character(bt$layer2), as.character(bt$layer3)))
+    cat(sprintf("  • Tasa de Dropout Oculto      : %s\n", as.character(bt$hidden_dropout)))
+    cat(sprintf("  • Tasa de Dropout Visible     : %s\n", as.character(bt$visible_dropout)))
+  } else if (inherits(mod_obj, "caretStack")) {
+    cat(sprintf("\nResumen del Meta-Modelo GLM Stacking (%s):\n", scen_label))
+    print(mod_obj)
+  } else if (mod_name == "ElasticNet" && !is.null(mod_obj$bestTune)) {
+    cat(sprintf(
+      "\nHiperparámetros óptimos Elastic Net (%s): alpha = %.4g | lambda = %.4g\nCoeficientes regularizados:\n",
+      scen_label, mod_obj$bestTune$alpha, mod_obj$bestTune$lambda
+    ))
+    print(stats::coef(mod_obj$finalModel, s = mod_obj$bestTune$lambda))
+  } else if (mod_name == "LDA" && !is.null(mod_obj$finalModel$scaling)) {
+    cat(sprintf("\nCoeficientes discriminantes lineales LD1 (%s):\n", scen_label))
+    print(mod_obj$finalModel$scaling)
+  } else if (!is.null(mod_obj$bestTune)) {
+    cat(sprintf("\nHiperparámetros óptimos seleccionados en validación cruzada para %s (%s):\n", mod_name, scen_label))
+    print(mod_obj$bestTune)
+  }
+}
+
+# Generador dinamico de pestañas Quarto con knitr::knit_child para que ABSOLUTAMENTE TODOS los modelos tengan su propia pestaña individual
+build_all_model_tabs_markdown <- function(scenario = c("balanced", "unbalanced")) {
+  scenario <- match.arg(scenario)
+  bench_df <- if (scenario == "balanced") bench_bal_full else bench_unbal_full
+  all_cms  <- if (scenario == "balanced") cms_bal_full else cms_unbal_full
+
+  ordered_models <- if (!is.null(bench_df) && nrow(bench_df) > 0) {
+    intersect(bench_df$Modelo, names(all_cms))
+  } else {
+    names(all_cms)
+  }
+  ordered_models <- c(ordered_models, setdiff(names(all_cms), ordered_models))
+
+  child_chunks <- character()
+
+  # Pestaña 1: Resumen Simplificado (Top 2 Youden + Heuristico + Top 3 ML)
+  bt3 <- strrep("`", 3)
+  chunk_top6 <- sprintf(
+    "#### Resumen: Top 6 (2 Youden + Heurístico + 3 ML)\n\n%s{r top6_%s, fig.width=10, fig.height=10.2, echo=FALSE, warning=FALSE, message=FALSE}\nrender_top6_summary_cms_grid('%s')\n%s\n",
+    bt3, scenario, scenario, bt3
+  )
+  child_chunks <- c(child_chunks, chunk_top6)
+
+  # Pestañas 2..N: Una pestaña individual para CADA UNO de los modelos evaluados
+  for (idx in seq_along(ordered_models)) {
+    m_name <- ordered_models[idx]
+    safe_id <- gsub("[^a-zA-Z0-9_]", "_", paste0(scenario, "_", m_name, "_", idx))
+    chunk_m <- sprintf(
+      "#### %s\n\n%s{r diag_%s, fig.width=9.5, fig.height=4.6, results='asis', echo=FALSE, warning=FALSE, message=FALSE}\nrender_single_model_diagnostics('%s', '%s')\n%s\n\n%s{r extra_%s, fig.width=8.5, fig.height=5.2, echo=FALSE, warning=FALSE, message=FALSE}\nrender_single_model_extra('%s', '%s')\n%s\n",
+      m_name, bt3, safe_id, m_name, scenario, bt3, bt3, safe_id, m_name, scenario, bt3
+    )
+    child_chunks <- c(child_chunks, chunk_m)
+  }
+
+  res_md <- knitr::knit_child(
+    text = paste(child_chunks, collapse = "\n\n"),
+    envir = environment(),
+    quiet = TRUE
+  )
+  cat(res_md, sep = "\n")
+}
+```
+
+## Resumen de los Datos de Entrenamiento (TP vs. FP)
+
+El conjunto de entrenamiento clasifica cada secuencia funcional de CAPTUS (`marker_type == NUC`) en dos categorías:
+
+- **TP (`TRUE_POSITIVE`):** Secuencia que coincide espacialmente con el gen de referencia esperado.
+- **FP (`FALSE_POSITIVE`):** Alineamiento cruzado en otro gen, región no codificante o fragmento redundante.
+
+```{r summary_tp_fp_table}
+if (!is.null(datos) && "Validacion_Espacial" %in% colnames(datos)) {
+  df_resumen_clases <- datos %>%
+    dplyr::mutate(
+      Clase = ifelse(Validacion_Espacial %in% c("TRUE_POSITIVE", "TP"), "TP (Verdadero Positivo)", "FP (Falso Positivo)")
+    ) %>%
+    dplyr::group_by(Clase) %>%
+    dplyr::summarise(
+      Secuencias = dplyr::n(),
+      Porcentaje = round((dplyr::n() / nrow(datos)) * 100, 2),
+      `Media % Recuperado` = round(mean(as.numeric(pct_recovered), na.rm = TRUE), 2),
+      `Media % Identidad`  = round(mean(as.numeric(pct_identity), na.rm = TRUE), 2),
+      `Media Score`        = round(mean(as.numeric(score), na.rm = TRUE), 2),
+      `Media WScore`       = round(mean(as.numeric(wscore), na.rm = TRUE), 2),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(dplyr::desc(Clase))
+
+  DT::datatable(
+    df_resumen_clases,
+    rownames = FALSE,
+    caption = sprintf("Resumen de secuencias de entrenamiento (Total = %d secuencias NUC)", nrow(datos)),
+    options = list(dom = "t", ordering = FALSE, autoWidth = FALSE)
+  ) %>%
+    DT::formatCurrency(columns = "Porcentaje", currency = "%", before = FALSE, digits = 2)
+} else {
+  cat("> *No se encontró el archivo de datos preparados para mostrar el resumen.*\n")
+}
+```
+
+## Distribución de Variables y Puntos de Corte de Youden
+
+Las cuatro métricas continuas de CAPTUS (`pct_recovered`, `pct_identity`, `score` y `wscore`) se evalúan mediante curvas ROC para encontrar el umbral que maximiza el **índice J de Youden** ($J = \text{Sensibilidad} + \text{Especificidad} - 1$).
+
+```{r density_plot}
+if (!is.null(datos)) {
+  metricas_num <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(datos))
+  if (length(metricas_num) > 0 && "Validacion_Espacial" %in% colnames(datos)) {
+    p_dens <- plot_metric_densities(
+      df = datos,
+      response_col = "Validacion_Espacial",
+      metric_cols = metricas_num,
+      thresholds = youden_thresholds
+    )
+    plotly::ggplotly(p_dens)
+  }
+}
+```
+
+## Resultados por Escenario: Benchmark Completo y Diagnóstico de Todos los Modelos
+
+Al seleccionar **Escenario Balanceado (*Down-Sampling*)** o **Escenario Desbalanceado (Proporción Original)** se actualizan el **gráfico vertical de Benchmark**, la **tabla completa exportable** y **todas las pestañas de modelos** (el resumen con los **2 mejores Youden + Heurístico + 3 mejores ML**, y las pestañas individuales de cada uno de los 24 modelos evaluados: `RandomForest`, `GBM`, `XGBoost`, `SVM_Radial`, `SVM_Lineal`, `SVM_Polinomial`, `Red_Neuronal`, `Red_Neuronal_Bag`, `ElasticNet`, `KNN`, `CART`, `NaiveBayes`, `LDA`, `MLP`, `MLP_Regularizado`, `QDA`, `Bagging_Arboles`, `Stacked Autoencoder - DNN`, `Ensamble_Stacking`, `Weighted_Heuristic` y los 4 cortes `Youden`).
+
+<details>
+<summary class="summary-btn">📐 Mostrar / Ocultar Fórmulas de las Métricas de Evaluación</summary>
+<div class="formula-box">
+
+Sea $TP$ (Verdaderos Positivos), $FP$ (Falsos Positivos), $TN$ (Verdaderos Negativos) y $FN$ (Falsos Negativos):
+
+1. **Exactitud (*Accuracy*):** Proporción total de predicciones correctas.
+   $$\text{Exactitud} = \frac{TP + TN}{TP + FP + FN + TN}$$
+2. **Sensibilidad (*Recall / TPR*):** Proporción de copias génicas reales (`TP`) detectadas correctamente.
+   $$\text{Sensibilidad} = \frac{TP}{TP + FN}$$
+3. **Especificidad (*TNR*):** Proporción de secuencias de ruido (`FP`) descartadas correctamente.
+   $$\text{Especificidad} = \frac{TN}{TN + FP}$$
+4. **Exactitud Balanceada (*Balanced Accuracy*):** Promedio entre sensibilidad y especificidad.
+   $$\text{Exactitud Balanceada} = \frac{\text{Sensibilidad} + \text{Especificidad}}{2}$$
+5. **Precisión (*Valor Predictivo Positivo / PPV*):** Proporción de secuencias llamadas positivas que realmente son `TP`.
+   $$\text{Precisión} = \frac{TP}{TP + FP}$$
+6. **Tasa de Falsos Descubrimientos (*FDR*):** Proporción de falsos positivos dentro de las predicciones positivas.
+   $$\text{FDR} = 1 - \text{Precisión} = \frac{FP}{TP + FP}$$
+7. **F1-Score:** Media armónica entre la Precisión y la Sensibilidad.
+   $$\text{F1-Score} = 2 \times \frac{\text{Precisión} \times \text{Sensibilidad}}{\text{Precisión} + \text{Sensibilidad}}$$
+8. **ROC-AUC:** Área bajo la curva ROC en todos los puntos de corte posibles.
+9. **MCC (*Coeficiente de Correlación de Matthews*):** Correlación balanceada entre clase real y predicha (entre $-1$ y $+1$).
+   $$\text{MCC} = \frac{(TP \times TN) - (FP \times FN)}{\sqrt{(TP + FP)(TP + FN)(TN + FP)(TN + FN)}}$$
+
+</div>
+</details>
+
+::: {.panel-tabset}
+
+# Escenario Balanceado (*Down-Sampling*)
+
+### Gráfico y Tabla de Benchmark (Escenario Balanceado)
+
+Por defecto se muestran los **6 modelos clave** (los **2 mejores cortes de Youden**, el **Modelo Heurístico** y los **3 mejores modelos de ML** excluyendo `Ensamble_Stacking`), ordenados de arriba a abajo del mejor al peor **ROC-AUC**. Usa los botones desplegables debajo del gráfico si deseas ver el benchmark gráfico de todos los modelos evaluados o desplegar la tabla completa:
+
+```{r plot_balanced_top6}
+if (!is.null(bench_bal_full)) {
+  top6_bal <- get_top6_summary_models(bench_bal_full)
+  df_bal_top6 <- bench_bal_full %>%
+    dplyr::filter(Modelo %in% top6_bal) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+  build_interactive_benchmark_plotly(
+    df_bal_top6,
+    scenario_title = "Escenario Balanceado (Submuestreo)",
+    view_label = "6 Modelos Clave"
+  )
+}
+```
+
+<details ontoggle="if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}">
+<summary class="summary-btn">📊 Ver Benchmark de Todos los Modelos Evaluados (Escenario Balanceado)</summary>
+
+```{r plot_balanced_all_models}
+if (!is.null(bench_bal_full)) {
+  build_interactive_benchmark_plotly(
+    bench_bal_full,
+    scenario_title = "Escenario Balanceado (Submuestreo)",
+    view_label = paste0("Todos los ", nrow(bench_bal_full), " Modelos Evaluados")
+  )
+}
+```
+
+</details>
+
+<details ontoggle="if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize')); if(window.jQuery && jQuery.fn.dataTable){jQuery.fn.dataTable.tables({visible:true, api:true}).columns.adjust();}}, 60);}">
+<summary class="summary-btn">📋 Ver Tabla</summary>
+
+<div class="asterisk-note">
+**Nota sobre el asterisco (`*`) en la tabla:** Los modelos marcados con **`*`** en la columna `Modelo` (y detallados en `Mejor_Version_FDR`) alcanzan un mejor desempeño global en su **otra versión** (*Escenario Desbalanceado*), evaluado mediante el índice global con fuerte ponderación sobre el control de falsos descubrimientos ($\text{FDR}$):
+$$\text{Índice Global}_{\text{FDR}} = 0.45(1 - \text{FDR}) + 0.20\,\text{F1} + 0.15\,\text{MCC} + 0.10\,\text{Exactitud Bal.} + 0.10\,\text{ROC-AUC}$$
+</div>
+
+```{r table_balanced_full}
+if (!is.null(bench_bal_full)) {
+  format_benchmark_dt(
+    bench_bal_full,
+    other_df = bench_unbal_full,
+    current_scen = "Balanceado",
+    other_scen = "Desbalanceado",
+    caption_text = "Todos los Modelos Evaluados — Escenario Balanceado (* indica mejor desempeño global/FDR en Desbalanceado)"
+  )
+}
+```
+
+</details>
+
+### Matrices de Confusión e Importancia por Modelo (Escenario Balanceado)
+
+La primera pestaña muestra la vista simplificada (**los 2 mejores Youden + el Modelo Heurístico + los 3 mejores modelos de ML**, excluyendo `Ensamble_Stacking` y ordenados por `ROC-AUC`), y las pestañas siguientes permiten consultar uno por uno **absolutamente todos los modelos evaluados** (incluyendo `Ensamble_Stacking`):
+
+::: {.panel-tabset}
+
+```{r all_tabs_balanced, results='asis'}
+build_all_model_tabs_markdown("balanced")
+```
+
+:::
+
+# Escenario Desbalanceado (Proporción Original)
+
+### Gráfico y Tabla de Benchmark (Escenario Desbalanceado)
+
+Por defecto se muestran los **6 modelos clave** en el escenario desbalanceado (los **2 mejores cortes de Youden**, el **Modelo Heurístico** y los **3 mejores modelos de ML** excluyendo `Ensamble_Stacking`), ordenados de arriba a abajo del mejor al peor **ROC-AUC**. Usa los botones desplegables debajo del gráfico si deseas ver el benchmark gráfico de todos los modelos evaluados o desplegar la tabla completa:
+
+```{r plot_unbalanced_top6}
+if (!is.null(bench_unbal_full)) {
+  top6_unbal <- get_top6_summary_models(bench_unbal_full)
+  df_unbal_top6 <- bench_unbal_full %>%
+    dplyr::filter(Modelo %in% top6_unbal) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+  build_interactive_benchmark_plotly(
+    df_unbal_top6,
+    scenario_title = "Escenario Desbalanceado (Sin Remuestreo)",
+    view_label = "6 Modelos Clave"
+  )
+}
+```
+
+<details ontoggle="if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}">
+<summary class="summary-btn">📊 Ver Benchmark de Todos los Modelos Evaluados (Escenario Desbalanceado)</summary>
+
+```{r plot_unbalanced_all_models}
+if (!is.null(bench_unbal_full)) {
+  build_interactive_benchmark_plotly(
+    bench_unbal_full,
+    scenario_title = "Escenario Desbalanceado (Sin Remuestreo)",
+    view_label = paste0("Todos los ", nrow(bench_unbal_full), " Modelos Evaluados")
+  )
+}
+```
+
+</details>
+
+<details ontoggle="if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize')); if(window.jQuery && jQuery.fn.dataTable){jQuery.fn.dataTable.tables({visible:true, api:true}).columns.adjust();}}, 60);}">
+<summary class="summary-btn">📋 Ver Tabla</summary>
+
+<div class="asterisk-note">
+**Nota sobre el asterisco (`*`) en la tabla:** Los modelos marcados con **`*`** en la columna `Modelo` (y detallados en `Mejor_Version_FDR`) alcanzan un mejor desempeño global en su **otra versión** (*Escenario Balanceado*), evaluado mediante el índice global con fuerte ponderación sobre el control de falsos descubrimientos ($\text{FDR}$):
+$$\text{Índice Global}_{\text{FDR}} = 0.45(1 - \text{FDR}) + 0.20\,\text{F1} + 0.15\,\text{MCC} + 0.10\,\text{Exactitud Bal.} + 0.10\,\text{ROC-AUC}$$
+</div>
+
+```{r table_unbalanced_full}
+if (!is.null(bench_unbal_full)) {
+  format_benchmark_dt(
+    bench_unbal_full,
+    other_df = bench_bal_full,
+    current_scen = "Desbalanceado",
+    other_scen = "Balanceado",
+    caption_text = "Todos los Modelos Evaluados — Escenario Desbalanceado (* indica mejor desempeño global/FDR en Balanceado)"
+  )
+}
+```
+
+</details>
+
+### Matrices de Confusión e Importancia por Modelo (Escenario Desbalanceado)
+
+La primera pestaña muestra la vista simplificada (**los 2 mejores Youden + el Modelo Heurístico + los 3 mejores modelos de ML** en el escenario desbalanceado), y las pestañas siguientes permiten abrir uno por uno **todos los modelos evaluados**:
+
+::: {.panel-tabset}
+
+```{r all_tabs_unbalanced, results='asis'}
+build_all_model_tabs_markdown("unbalanced")
+```
+
+:::
+
+:::
+
+## Explicabilidad SHAP e Inspección Interactiva por Secuencia (Waterfall Plot)
+
+El análisis **KernelSHAP** cuantifica cómo cada variable continua empuja la probabilidad predicha hacia **Verdadero Positivo (`TP`)** o hacia **Falso Positivo (`FP`)**. En la pestaña **Explorador Interactivo por Fila y Gen (Waterfall Plot)** puedes elegir cualquier secuencia del conjunto de entrenamiento, ver a qué **gen/locus** corresponde y si su clase real es **TP o FP**.
+
+::: {.panel-tabset}
+
+### Impacto Global (Beeswarm Plot)
+
+```{r shap_beeswarm_dual, fig.width=9.5, fig.height=5}
+if (!is.null(shap_obj_bal)) {
+  suppressPackageStartupMessages(library(shapviz))
+  p_bee <- shapviz::sv_importance(shap_obj_bal, kind = "bee") +
+    ggplot2::labs(
+      title = "Efecto Direccional de cada Variable (KernelSHAP — Elastic Net)",
+      subtitle = "Contribución de cada métrica a la probabilidad de Verdadero Positivo (TP)"
+    ) +
+    ggplot2::theme_bw(base_size = 12)
+  print(p_bee)
+} else {
+  cat("> *Archivo `shap_values.rds` no encontrado en la carpeta de modelos.*\n")
+}
+```
+
+### Explorador Interactivo por Fila y Gen (Waterfall Plot)
+
+```{r shap_interactive_waterfall, results='asis'}
+if (!is.null(shap_obj_bal) && !is.null(df_ml_report)) {
+  S_mat <- as.matrix(shap_obj_bal$S)
+  X_mat <- as.data.frame(shap_obj_bal$X)
+  base_val <- as.numeric(shap_obj_bal$baseline)
+  n_rows <- min(nrow(S_mat), nrow(df_ml_report))
+
+  wf_records <- lapply(seq_len(n_rows), function(i) {
+    row_d <- df_ml_report[i, , drop = FALSE]
+    gen_ref <- if ("Locus_Ref_Limpio" %in% colnames(row_d) && !is.na(row_d$Locus_Ref_Limpio) && nzchar(as.character(row_d$Locus_Ref_Limpio))) {
+      as.character(row_d$Locus_Ref_Limpio)
+    } else if ("locus" %in% colnames(row_d) && !is.na(row_d$locus)) {
+      as.character(row_d$locus)
+    } else {
+      "Sin_Gen_Anotado (Intergénico/Off-target)"
+    }
+    og_id <- if ("locus" %in% colnames(row_d) && !is.na(row_d$locus)) {
+      as.character(row_d$locus)
+    } else if ("OG_Limpio" %in% colnames(row_d) && !is.na(row_d$OG_Limpio)) {
+      as.character(row_d$OG_Limpio)
+    } else if ("ref_name" %in% colnames(row_d) && !is.na(row_d$ref_name)) {
+      as.character(row_d$ref_name)
+    } else {
+      "N/A"
+    }
+    seq_id <- if ("ID_GFF_Compatible" %in% colnames(row_d) && !is.na(row_d$ID_GFF_Compatible)) {
+      as.character(row_d$ID_GFF_Compatible)
+    } else {
+      paste0("Secuencia_", i)
+    }
+    clase_real <- as.character(row_d$Clase)
+    shap_vec <- as.numeric(S_mat[i, ])
+    feat_vec <- as.numeric(X_mat[i, ])
+    names_f  <- colnames(S_mat)
+    pred_prob <- round(min(1, max(0, base_val + sum(shap_vec))), 4)
+
+    list(
+      row = i,
+      seq_id = seq_id,
+      gene = gen_ref,
+      og = og_id,
+      clase = clase_real,
+      base = round(base_val, 4),
+      fx = pred_prob,
+      features = names_f,
+      values = round(feat_vec, 2),
+      shaps = round(shap_vec, 4)
+    )
+  })
+
+  wf_json <- jsonlite::toJSON(wf_records, auto_unbox = TRUE)
+  fence_open  <- paste0("\n", strrep("`", 3), "{=html}\n")
+  fence_close <- paste0("\n", strrep("`", 3), "\n\n")
+
+  html_block <- paste0(
+    fence_open,
+    '<div class="wf-controls">\n',
+    '<div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">\n',
+    '<div>\n',
+    '<label for="wf-class-filter" style="font-weight:bold; margin-right:6px;">Filtrar por Clase Real:</label>\n',
+    '<select id="wf-class-filter" style="padding:6px 10px; border-radius:5px; border:1px solid #bdc3c7;">\n',
+    '<option value="ALL">Todas las filas (', n_rows, ')</option>\n',
+    '<option value="TP">Solo TP (Verdaderos Positivos)</option>\n',
+    '<option value="FP">Solo FP (Falsos Positivos)</option>\n',
+    '</select>\n',
+    '</div>\n',
+    '<div style="flex-grow:1;">\n',
+    '<label for="wf-row-select" style="font-weight:bold; margin-right:6px;">Seleccionar Fila / Gen:</label>\n',
+    '<select id="wf-row-select" style="padding:6px 10px; border-radius:5px; border:1px solid #bdc3c7; width:100%; max-width:540px;"></select>\n',
+    '</div>\n',
+    '<div>\n',
+    '<button id="wf-prev-btn" type="button" style="padding:6px 12px; border-radius:5px; border:1px solid #2c3e50; background:#fff; cursor:pointer; font-weight:bold;">&#9664; Anterior</button>\n',
+    '<button id="wf-next-btn" type="button" style="padding:6px 12px; border-radius:5px; border:1px solid #2c3e50; background:#fff; cursor:pointer; font-weight:bold;">Siguiente &#9654;</button>\n',
+    '</div>\n',
+    '</div>\n',
+    '</div>\n',
+    '<div id="wf-meta-info" class="wf-meta-card"></div>\n',
+    '<div id="wf-plotly-container" style="width:100%; height:480px;"></div>\n',
+    '<script>\n',
+    '(function() {\n',
+    'const wfData = ', wf_json, ';\n',
+    'const filterSelect = document.getElementById("wf-class-filter");\n',
+    'const rowSelect = document.getElementById("wf-row-select");\n',
+    'const prevBtn = document.getElementById("wf-prev-btn");\n',
+    'const nextBtn = document.getElementById("wf-next-btn");\n',
+    'const metaDiv = document.getElementById("wf-meta-info");\n',
+    'function populateDropdown(filterVal) {\n',
+    '  const currentVal = rowSelect.value;\n',
+    '  rowSelect.innerHTML = "";\n',
+    '  const filtered = wfData.filter(d => filterVal === "ALL" || d.clase === filterVal);\n',
+    '  filtered.forEach(d => {\n',
+    '    const opt = document.createElement("option");\n',
+    '    opt.value = d.row;\n',
+    '    opt.textContent = "Fila #" + d.row + " [" + d.clase + "] — Gen: " + d.gene + " | Ortogrupo: " + d.og + " (" + d.seq_id + ") | P(TP)=" + (d.fx * 100).toFixed(1) + "%";\n',
+    '    rowSelect.appendChild(opt);\n',
+    '  });\n',
+    '  if (filtered.some(d => String(d.row) === String(currentVal))) {\n',
+    '    rowSelect.value = currentVal;\n',
+    '  } else if (filtered.length > 0) {\n',
+    '    rowSelect.value = filtered[0].row;\n',
+    '  }\n',
+    '  renderWaterfall(parseInt(rowSelect.value, 10));\n',
+    '}\n',
+    'function renderWaterfall(rowNum) {\n',
+    '  const rec = wfData.find(d => d.row === rowNum);\n',
+    '  if (!rec) return;\n',
+    '  const badgeHtml = rec.clase === "TP"\n',
+    '    ? "<span class=\\"badge-tp\\">TP (Verdadero Positivo)</span>"\n',
+    '    : "<span class=\\"badge-fp\\">FP (Falso Positivo)</span>";\n',
+    '  const predLabel = rec.fx >= 0.5 ? "TP (Positivo)" : "FP (Negativo)";\n',
+    '  metaDiv.innerHTML =\n',
+    '    "<b>Fila Seleccionada:</b> #" + rec.row + " &nbsp;|&nbsp; " +\n',
+    '    "<b>Clase Real (Ground Truth):</b> " + badgeHtml + " &nbsp;|&nbsp; " +\n',
+    '    "<b>Gen de Referencia:</b> <code>" + rec.gene + "</code> &nbsp;|&nbsp; " +\n',
+    '    "<b>Ortogrupo / Locus:</b> <code>" + rec.og + "</code> (ID: <code>" + rec.seq_id + "</code>)<br>" +\n',
+    '    "<span style=\\"color:#5d6d7e; display:inline-block; margin-top:6px;\\">" +\n',
+    '    "<b>Valor Base E[f(x)]:</b> " + rec.base.toFixed(3) + " &nbsp;&rarr;&nbsp; " +\n',
+    '    "<b>Probabilidad Predicha f(x):</b> <b>" + rec.fx.toFixed(3) + "</b> (" + (rec.fx * 100).toFixed(1) + "% — Predicción: <b>" + predLabel + "</b>)" +\n',
+    '    "</span>";\n',
+    '  const idx = rec.features.map((_, i) => i).sort((a, b) => Math.abs(rec.shaps[a]) - Math.abs(rec.shaps[b]));\n',
+    '  const yLabels = ["Valor Base E[f(x)]"];\n',
+    '  const xMeasures = ["absolute"];\n',
+    '  const xVals = [rec.base];\n',
+    '  const textLabels = [rec.base.toFixed(3)];\n',
+    '  idx.forEach(i => {\n',
+    '    yLabels.push(rec.features[i] + " = " + rec.values[i]);\n',
+    '    xMeasures.push("relative");\n',
+    '    xVals.push(rec.shaps[i]);\n',
+    '    const signStr = rec.shaps[i] >= 0 ? "+" : "";\n',
+    '    textLabels.push(signStr + rec.shaps[i].toFixed(3));\n',
+    '  });\n',
+    '  yLabels.push("Predicción Final f(x)");\n',
+    '  xMeasures.push("total");\n',
+    '  xVals.push(rec.fx);\n',
+    '  textLabels.push(rec.fx.toFixed(3));\n',
+    '  const trace = {\n',
+    '    type: "waterfall",\n',
+    '    orientation: "h",\n',
+    '    measure: xMeasures,\n',
+    '    y: yLabels,\n',
+    '    x: xVals,\n',
+    '    text: textLabels,\n',
+    '    textposition: "outside",\n',
+    '    connector: { line: { color: "#7f8c8d", width: 1.5, dash: "dot" } },\n',
+    '    increasing: { marker: { color: "#27ae60" } },\n',
+    '    decreasing: { marker: { color: "#c0392b" } },\n',
+    '    totals:     { marker: { color: "#2980b9" } }\n',
+    '  };\n',
+    '  const layout = {\n',
+    '    title: {\n',
+    '      text: "<b>Anatomía de la Predicción Individual (Waterfall SHAP) — Fila #" + rec.row + " (" + rec.clase + " | Gen: " + rec.gene + ")</b>",\n',
+    '      x: 0.5\n',
+    '    },\n',
+    '    xaxis: { title: "Probabilidad de Verdadero Positivo P(TP)", range: [-0.05, 1.12] },\n',
+    '    yaxis: { title: "", automargin: true },\n',
+    '    margin: { l: 190, r: 50, t: 65, b: 55 },\n',
+    '    showlegend: false\n',
+    '  };\n',
+    '  if (window.Plotly) {\n',
+    '    Plotly.react("wf-plotly-container", [trace], layout, {responsive: true});\n',
+    '  }\n',
+    '}\n',
+    'filterSelect.addEventListener("change", () => populateDropdown(filterSelect.value));\n',
+    'rowSelect.addEventListener("change", () => renderWaterfall(parseInt(rowSelect.value, 10)));\n',
+    'prevBtn.addEventListener("click", () => {\n',
+    '  if (rowSelect.selectedIndex > 0) {\n',
+    '    rowSelect.selectedIndex -= 1;\n',
+    '    renderWaterfall(parseInt(rowSelect.value, 10));\n',
+    '  }\n',
+    '});\n',
+    'nextBtn.addEventListener("click", () => {\n',
+    '  if (rowSelect.selectedIndex < rowSelect.options.length - 1) {\n',
+    '    rowSelect.selectedIndex += 1;\n',
+    '    renderWaterfall(parseInt(rowSelect.value, 10));\n',
+    '  }\n',
+    '});\n',
+    'window.addEventListener("load", () => populateDropdown("ALL"));\n',
+    'setTimeout(() => populateDropdown("ALL"), 400);\n',
+    '})();\n',
+    '</script>',
+    fence_close
+  )
+  cat(html_block)
+} else {
+  cat("> *No se encontraron valores SHAP o datos preparados para construir el explorador interactivo Waterfall.*\n")
+}
+```
+
+:::

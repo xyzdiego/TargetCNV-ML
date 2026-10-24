@@ -57,6 +57,7 @@ Rscript ./scripts/01_prepare_data.R \
   --captus_gff "$TEST_DIR/mock_captus.gff" \
   --captus_stats "$TEST_DIR/mock_captus_extract.tsv" \
   --dict_ref "$TEST_DIR/mock_dictionary.tsv" \
+  --allow_multi_sample \
   --out_dir "$PREPARED_DIR"
 
 if [ -f "$PREPARED_DIR/data_prepared.rds" ]; then
@@ -82,6 +83,8 @@ Rscript ./scripts/02_train_models.R \
   --sampling down \
   --seed 42 \
   --cores 2 \
+  --fast_tournament \
+  --no_stacking \
   "${REPORT_ARGS[@]}"
 
 if [ -f "$MODELS_DIR/heuristic_model.rds" ] && [ -f "$MODELS_DIR/youden_thresholds.rds" ]; then
@@ -95,14 +98,19 @@ fi
 # PASO 3: Inferencia de Produccion y Generacion de Matriz CNV
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}${BLUE}[PASO 3/3] Ejecutando 03_cnv_inference.R...${NC}"
+INF_REPORT_ARGS=(--report_file "$TEST_DIR/reporte_inferencia_test.html")
+if [ "$NO_REPORT" -eq 1 ]; then
+  INF_REPORT_ARGS=(--no_render_report)
+fi
+
 Rscript ./scripts/03_cnv_inference.R \
   --input "$TEST_DIR/mock_captus_extract.tsv" \
   --models_dir "$MODELS_DIR" \
   --out_dir "$RESULTS_DIR" \
   --cov_threshold 50.0 \
-  --frag_threshold 120.0 \
   --min_votes 2 \
-  --top_loci 10
+  --top_loci 10 \
+  "${INF_REPORT_ARGS[@]}" 
 
 if [ -f "$RESULTS_DIR/cnv_matrix.tsv" ] && [ -f "$RESULTS_DIR/consensus_verdicts.tsv" ]; then
   echo -e "${GREEN}✓ Paso 3 completado exitosamente.${NC}\n"
@@ -119,6 +127,9 @@ if [ "$SYNC_ROOT" -eq 1 ]; then
   cp -f "$RESULTS_DIR"/* results/ 2>/dev/null || true
   if [ -f "$TEST_DIR/reporte_entrenamiento_test.html" ]; then
     cp -f "$TEST_DIR/reporte_entrenamiento_test.html" reporte_entrenamiento.html
+  fi
+  if [ -f "$TEST_DIR/reporte_inferencia_test.html" ]; then
+    cp -f "$TEST_DIR/reporte_inferencia_test.html" reporte_inferencia.html
   fi
   echo -e "${GREEN}✓ Sincronizacion con la raiz completada.${NC}\n"
 fi

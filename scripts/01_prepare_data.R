@@ -79,6 +79,19 @@ option_list <- list(
     default = file.path(project_root, "data"),
     help = "Directorio donde se guardaran los datos preparados [Por defecto: data/]",
     metavar = "DIR"
+  ),
+  make_option(
+    c("--out_prefix"),
+    type = "character",
+    default = "data_prepared",
+    help = "Prefijo de los archivos de salida (.rds y .tsv) [Por defecto: data_prepared]",
+    metavar = "STR"
+  ),
+  make_option(
+    c("--allow_multi_sample"),
+    action = "store_true",
+    default = FALSE,
+    help = "Permitir aplicar un mismo GFF sobre multiples muestras sin --sample (solo para datasets sinteticos MWE)"
   )
 )
 
@@ -127,7 +140,7 @@ cat(sprintf("Modo de Cruce Espacial   : %s\n", opt$target_mode))
 if (!is.null(opt$gff_ref)) cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
 cat(sprintf("CAPTUS Contigs GFF       : %s\n", opt$captus_gff))
 cat(sprintf("Estadisticas CAPTUS      : %s\n", opt$captus_stats))
-if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario Ortologico   : %s\n", opt$dict_ref))
+if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homologia   : %s\n", opt$dict_ref))
 if (!is.null(opt$sample))   cat(sprintf("Filtro de Muestra        : %s\n", opt$sample))
 cat(sprintf("Directorio de Salida     : %s\n", opt$out_dir))
 cat("--------------------------------------------------------\n")
@@ -197,8 +210,8 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
 cat("[4/6] Integrando metricas continuas de alineamiento CAPTUS...\n")
 stats_crudo <- utils::read.delim(opt$captus_stats, header = TRUE, stringsAsFactors = FALSE)
 
+muestras_disponibles <- unique(stats_crudo$sample_name)
 if (!is.null(opt$sample)) {
-  muestras_disponibles <- unique(stats_crudo$sample_name)
   if (!opt$sample %in% muestras_disponibles) {
     stop(sprintf(
       "[ERROR] La muestra '%s' no existe en %s.\n          Muestras disponibles (%d): %s%s",
@@ -209,6 +222,17 @@ if (!is.null(opt$sample)) {
   }
   stats_crudo <- stats_crudo %>% dplyr::filter(sample_name == opt$sample)
   cat(sprintf("   -> Filtrado para la muestra: %s (%d filas)\n", opt$sample, nrow(stats_crudo)))
+} else if (length(muestras_disponibles) > 1 && !isTRUE(opt$allow_multi_sample)) {
+  stop(sprintf(
+    paste0(
+      "[ERROR] El archivo %s contiene %d muestras (%s%s), pero no se especifico --sample.\n",
+      "        Como el GFF corresponde a un ensamblaje especifico, indique --sample <Muestra> para evitar\n",
+      "        propagar las etiquetas espaciales de una muestra a las demas."
+    ),
+    opt$captus_stats, length(muestras_disponibles),
+    paste(utils::head(muestras_disponibles, 10), collapse = ", "),
+    if (length(muestras_disponibles) > 10) ", ..." else ""
+  ), call. = FALSE)
 }
 
 stats_limpio <- clean_captus_ids(stats_crudo, ref_col = "ref_name", hit_col = "hit")
@@ -244,8 +268,8 @@ stats_preparado <- calculate_locus_deltas(
 
 # 6. Exportacion de artefactos
 cat("[6/6] Guardando datos preparados...\n")
-out_tsv <- file.path(opt$out_dir, "data_prepared.tsv")
-out_rds <- file.path(opt$out_dir, "data_prepared.rds")
+out_tsv <- file.path(opt$out_dir, paste0(opt$out_prefix, ".tsv"))
+out_rds <- file.path(opt$out_dir, paste0(opt$out_prefix, ".rds"))
 
 utils::write.table(stats_preparado, file = out_tsv, sep = "\t", row.names = FALSE, quote = FALSE)
 saveRDS(stats_preparado, file = out_rds)
