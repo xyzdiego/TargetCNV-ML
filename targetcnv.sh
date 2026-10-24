@@ -19,9 +19,9 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ZENODO_URL="https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content"
+ZENODO_URL="https://zenodo.org/api/records/23610228/files/TargetCNV_Models.zip/content"
 ZENODO_ZIP="TargetCNV_Models.zip"
-ZENODO_MD5="13ec7b35711158079f962a96314eb671"
+ZENODO_MD5="93eafdf4187fc2f4f5ed816b98a4f673"
 
 print_banner() {
   echo -e "${BOLD}${CYAN}======================================================================${NC}"
