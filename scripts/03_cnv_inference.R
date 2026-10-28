@@ -101,6 +101,13 @@ option_list <- list(
     default = file.path(project_root, "reporte_inferencia.html"),
     help = "Ruta del reporte HTML de inferencia [Por defecto: reporte_inferencia.html]",
     metavar = "FILE"
+  ),
+  make_option(
+    c("--sources"),
+    type = "character",
+    default = "",
+    help = "Ruta opcional al archivo TSV con las citas de fuentes genomicas y de homologia para el reporte HTML",
+    metavar = "FILE"
   )
 )
 
@@ -414,8 +421,9 @@ if (!opt$render_report) {
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
   rendered_in_root <- file.path(dirname(qmd_inf), basename(out_html))
 
+  src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE))) else ""
   cmd_quarto <- sprintf(
-    "quarto render %s --output %s -P project_root:%s -P out_dir:%s -P consensus_verdicts:%s -P cnv_matrix:%s -P cnv_annotated:%s -P functional_genes:%s -P top_loci:%d",
+    "quarto render %s --output %s -P project_root:%s -P out_dir:%s -P consensus_verdicts:%s -P cnv_matrix:%s -P cnv_annotated:%s -P functional_genes:%s -P top_loci:%d%s",
     shQuote(qmd_inf),
     shQuote(basename(out_html)),
     shQuote(project_root),
@@ -424,7 +432,8 @@ if (!opt$render_report) {
     shQuote(normalizePath(file_matriz_tsv, mustWork = FALSE)),
     shQuote(normalizePath(file_anotado_tsv, mustWork = FALSE)),
     shQuote(normalizePath(file_func_tsv, mustWork = FALSE)),
-    opt$top_loci
+    opt$top_loci,
+    src_arg
   )
   cat(sprintf("   -> Ejecutando Quarto: %s\n", cmd_quarto))
   res_q <- system(cmd_quarto)

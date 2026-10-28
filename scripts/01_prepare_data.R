@@ -35,7 +35,7 @@ option_list <- list(
     c("-g", "--gff_ref"),
     type = "character",
     default = NULL,
-    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio en modo overlap]",
+    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio en escala cromosomica / modo overlap]",
     metavar = "FILE"
   ),
   make_option(
@@ -64,6 +64,13 @@ option_list <- list(
     type = "character",
     default = NULL,
     help = "Nombre exacto de la muestra para filtrar en captus_stats (ej. Storvum, Scitrullifolium, S_stella) [Opcional]",
+    metavar = "STR"
+  ),
+  make_option(
+    c("--genome_scale"),
+    type = "character",
+    default = NULL,
+    help = "Escala estructural del genoma: 'chromosome' (escala cromosomica -> overlap con --gff_ref) o 'contig' (escala de contigs -> atributo Target + puente HOG<->OG) [Opcional]",
     metavar = "STR"
   ),
   make_option(
@@ -98,10 +105,26 @@ option_list <- list(
 opt_parser <- OptionParser(
   usage = "Uso: %prog [opciones]",
   option_list = option_list,
-  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales con GFF, resuelve redundancias y genera dataset de entrenamiento/transferencia."
+  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales (escala cromosomica o escala de contigs), resuelve redundancias y genera dataset de entrenamiento/transferencia."
 )
 
 opt <- parse_args(opt_parser)
+
+# Sincronizar --genome_scale y --target_mode
+if (!is.null(opt$genome_scale)) {
+  gs_clean <- tolower(trimws(opt$genome_scale))
+  if (gs_clean %in% c("chromosome", "cromosomico", "cromosomica", "chr")) {
+    opt$target_mode <- "overlap"
+    opt$genome_scale <- "chromosome"
+  } else if (gs_clean %in% c("contig", "contigs", "fragmented", "fragmentado")) {
+    opt$target_mode <- "target_attr"
+    opt$genome_scale <- "contig"
+  } else {
+    stop(sprintf("[ERROR] --genome_scale debe ser 'chromosome' o 'contig' (recibido: '%s').", opt$genome_scale), call. = FALSE)
+  }
+} else {
+  opt$genome_scale <- if (opt$target_mode == "target_attr") "contig" else "chromosome"
+}
 
 # Validacion de argumentos requeridos
 if (is.null(opt$captus_gff) || is.null(opt$captus_stats)) {
@@ -113,7 +136,7 @@ if (!opt$target_mode %in% c("overlap", "target_attr")) {
 }
 if (opt$target_mode == "overlap" && is.null(opt$gff_ref)) {
   print_help(opt_parser)
-  stop("[ERROR] En modo 'overlap' debe especificar --gff_ref (o usar --target_mode target_attr).", call. = FALSE)
+  stop("[ERROR] En escala cromosomica (modo 'overlap') debe especificar --gff_ref (o usar --genome_scale contig / --target_mode target_attr).", call. = FALSE)
 }
 if (!is.null(opt$gff_ref) && !file.exists(opt$gff_ref)) {
   stop(sprintf("[ERROR] No se encontro el archivo GFF de referencia: %s", opt$gff_ref), call. = FALSE)
@@ -124,7 +147,6 @@ if (!file.exists(opt$captus_gff)) {
 if (!file.exists(opt$captus_stats)) {
   stop(sprintf("[ERROR] No se encontro el archivo de estadisticas: %s", opt$captus_stats), call. = FALSE)
 }
-# Un diccionario indicado pero inexistente NO debe degradar en silencio a "todo TRUE_POSITIVE"
 if (!is.null(opt$dict_ref) && !file.exists(opt$dict_ref)) {
   stop(sprintf("[ERROR] No se encontro el diccionario de referencia (--dict_ref): %s", opt$dict_ref), call. = FALSE)
 }
@@ -136,11 +158,13 @@ if (!dir.exists(opt$out_dir)) {
 cat("========================================================\n")
 cat(" TargetCNV-ML: Modulo 01 - Preparacion de Datos y Cruce Espacial \n")
 cat("========================================================\n")
-cat(sprintf("Modo de Cruce Espacial   : %s\n", opt$target_mode))
+cat(sprintf("Escala del Genoma        : %s (%s)\n",
+            if (opt$genome_scale == "chromosome") "Cromosomica" else "Contigs (Fragmentado)",
+            opt$target_mode))
 if (!is.null(opt$gff_ref)) cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
 cat(sprintf("CAPTUS Contigs GFF       : %s\n", opt$captus_gff))
 cat(sprintf("Estadisticas CAPTUS      : %s\n", opt$captus_stats))
-if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homologia   : %s\n", opt$dict_ref))
+if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homologia : %s\n", opt$dict_ref))
 if (!is.null(opt$sample))   cat(sprintf("Filtro de Muestra        : %s\n", opt$sample))
 cat(sprintf("Directorio de Salida     : %s\n", opt$out_dir))
 cat("--------------------------------------------------------\n")
@@ -154,24 +178,37 @@ gff_captus <- filter_gff_features(gff_captus_raw, feature_type = "protein_match:
 cat(sprintf("   -> Marcadores funcionales (NUC) CAPTUS: %d\n", length(gff_captus)))
 
 # 2. Interseccion espacial o extraccion desde atributo Target
+n_genes_ref <- NA_integer_
 if (opt$target_mode == "overlap") {
   gff_ref_raw <- rtracklayer::import(opt$gff_ref)
   genes_ref <- filter_gff_features(gff_ref_raw, feature_type = "gene")
-  cat(sprintf("   -> Genes de referencia cargados: %d\n", length(genes_ref)))
+  n_genes_ref <- length(genes_ref)
+  cat(sprintf("   -> Genes de referencia cargados: %d\n", n_genes_ref))
 
   cat("[2/6] Ejecutando interseccion espacial estricta (GenomicRanges)...\n")
   df_cruces <- find_spatial_overlaps(query_gff = gff_captus, subject_gff = genes_ref, ignore_strand = FALSE)
   cat(sprintf("   -> Hits espaciales encontrados: %d\n", nrow(df_cruces)))
 } else {
-  cat("[2/6] Extrayendo loci de referencia desde el atributo Target del GFF de CAPTUS...\n")
+  cat("[2/6] Extrayendo loci de referencia desde el atributo Target del GFF de CAPTUS (Escala de Contigs)...\n")
   df_cruces <- extract_target_loci_from_gff(gff_captus)
-  cat(sprintf("   -> Hits unicos extraidos desde Target: %d\n", nrow(df_cruces)))
+  cat(sprintf("   -> Hits unicos extraidos desde Target tras colapsar exones: %d\n", nrow(df_cruces)))
 }
 
 # 3. Clasificacion con diccionario de referencia (si esta disponible)
 cat("[3/6] Evaluando correspondencia con diccionario de referencia...\n")
+db_sheets <- NULL
+n_ogs_captus <- length(unique(df_cruces$OG_Captus))
+n_ogs_bridge <- n_ogs_captus
+
 if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
   dict_ref <- load_reference_dictionary(opt$dict_ref, species = opt$sample)
+  db_sheets <- attr(dict_ref, "db_sheets")
+  puente_og_hog <- attr(dict_ref, "puente_og_hog")
+  if (!is.null(puente_og_hog)) {
+    n_ogs_bridge <- sum(unique(df_cruces$OG_Captus) %in% puente_og_hog$OG_ID)
+    cat(sprintf("   -> Puente OG <-> HOG activado: %d de %d OGs de CAPTUS cubiertos por el puente.\n",
+                n_ogs_bridge, n_ogs_captus))
+  }
 
   col_locus <- intersect(c("Locus_Benoit", "Locus_Ref_Limpio", "Locus", "gene_id"), colnames(dict_ref))[1]
   col_og    <- intersect(c("OG_Benoit", "OG_ID", "Orthogroup_ID", "OG"), colnames(dict_ref))[1]
@@ -265,6 +302,14 @@ stats_preparado <- calculate_locus_deltas(
   wscore_col = "wscore",
   identity_col = "pct_identity"
 )
+
+attr(stats_preparado, "genome_scale") <- opt$genome_scale
+attr(stats_preparado, "target_mode")  <- opt$target_mode
+attr(stats_preparado, "db_sheets")    <- db_sheets
+attr(stats_preparado, "n_ogs_captus") <- n_ogs_captus
+attr(stats_preparado, "n_ogs_bridge") <- n_ogs_bridge
+attr(stats_preparado, "n_genes_ref")  <- n_genes_ref
+attr(stats_preparado, "n_hits_gff")   <- nrow(df_cruces)
 
 # 6. Exportacion de artefactos
 cat("[6/6] Guardando datos preparados...\n")

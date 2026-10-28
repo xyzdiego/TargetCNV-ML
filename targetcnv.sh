@@ -19,9 +19,19 @@ NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-ZENODO_URL="https://zenodo.org/api/records/23610228/files/TargetCNV_Models.zip/content"
+ZENODO_URL="https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content"
 ZENODO_ZIP="TargetCNV_Models.zip"
-ZENODO_MD5="93eafdf4187fc2f4f5ed816b98a4f673"
+ZENODO_MD5="13ec7b35711158079f962a96314eb671"
+
+resolve_default_sources_file() {
+  if [ -f "$SCRIPT_DIR/data/reference/sources_citations.tsv" ]; then
+    echo "data/reference/sources_citations.tsv"
+  elif [ -f "$SCRIPT_DIR/sources_citations.tsv" ]; then
+    echo "sources_citations.tsv"
+  else
+    echo "data/reference/sources_citations.tsv"
+  fi
+}
 
 print_banner() {
   echo -e "${BOLD}${CYAN}======================================================================${NC}"
@@ -48,6 +58,11 @@ ${BOLD}SUBCOMANDOS RAPIDOS (1 LINEA EN BASH):${NC}
       Ejecuta inferencia de CNV con el consenso de 7 modelos sobre muestras nuevas.
       Si se pasa --auto-zenodo y models/ esta vacio, descarga los modelos primero.
 
+  ${GREEN}transfer${NC} [--models-dir DIR] [--cit-data FILE] [--ste-data FILE] [--output FILE]
+      Evalua la transferencia filogenetica de los modelos de S. torvum sobre
+      S. citrullifolium (escala cromosomica) y S. stellatiglandulosum (escala de contigs)
+      y compila el reporte interactivo multiespecie (reporte_transferencia.html).
+
   ${GREEN}reproduce-storvum${NC} [--cores N]
       Reproduce en 1 comando el experimento de referencia completo con Solanum torvum
       (Paso 01 -> Paso 02 -> Paso 03 + Reporte HTML Quarto).
@@ -55,8 +70,8 @@ ${BOLD}SUBCOMANDOS RAPIDOS (1 LINEA EN BASH):${NC}
   ${GREEN}run-all${NC} -g <ref.gff3> -c <captus.gff> -s <stats.tsv> [-d <dict.xlsx>] [-i <infer.tsv>] [opciones]
       Ejecuta el pipeline completo de extremo a extremo (01 -> 02 -> 03) en una sola orden.
 
-  ${GREEN}prepare${NC} [opciones de 01_prepare_data.R]
-      Ejecuta directamente el Modulo 01 (Interseccion espacial y preparacion).
+  ${GREEN}prepare${NC} [--genome_scale chromosome|contig] [opciones de 01_prepare_data.R]
+      Ejecuta directamente el Modulo 01 (Interseccion espacial o atributo Target).
 
   ${GREEN}train${NC} [opciones de 02_train_models.R]
       Ejecuta directamente el Modulo 02 (Torneo ML, Youden, SHAP y reporte Quarto).
@@ -74,10 +89,13 @@ ${BOLD}EJEMPLOS / EXAMPLES:${NC}
   # 2. Descargar modelos de Zenodo e inferir CNV en muestras nuevas en 1 linea:
   ./targetcnv.sh infer -i data/CAPTUS_Muestras/captus-extract_stats.tsv --auto-zenodo
 
-  # 3. Reproducir experimento completo de Solanum torvum:
+  # 3. Generar el reporte multiespecie de transferencia filogenetica:
+  ./targetcnv.sh transfer
+
+  # 4. Reproducir experimento completo de Solanum torvum:
   ./targetcnv.sh reproduce-storvum --cores 4
 
-  # 4. Entrenar e inferir con una nueva especie en 1 sola linea:
+  # 5. Entrenar e inferir con una nueva especie en 1 sola linea:
   ./targetcnv.sh run-all \\
     -g ruta/genoma.gff3 -c ruta/contigs.gff -s ruta/captus_stats.tsv \\
     -d ruta/diccionario.xlsx -p MiMuestra -i ruta/muestras_poblacion.tsv
@@ -196,9 +214,17 @@ cmd_infer() {
         auto_zenodo=1
         shift ;;
       -m|--models_dir)
-        models_dir="$2"
-        pass_args+=("$1" "$2")
+        models_dir="${2:-models}"
+        pass_args+=("$1" "$models_dir")
         shift 2 ;;
+      --sources)
+        if [[ $# -ge 2 && "${2:-}" != -* ]]; then
+          pass_args+=("--sources" "$2")
+          shift 2
+        else
+          pass_args+=("--sources" "$(resolve_default_sources_file)")
+          shift 1
+        fi ;;
       *)
         pass_args+=("$1")
         shift ;;
@@ -287,6 +313,9 @@ cmd_run_all() {
       -d|--dict_ref) dict_ref="$2"; shift 2 ;;
       -p|--sample) sample_name="$2"; shift 2 ;;
       --target_mode) target_mode="$2"; shift 2 ;;
+      --genome_scale)
+        if [[ "$2" == "contig" || "$2" == "contigs" ]]; then target_mode="target_attr"; else target_mode="overlap"; fi
+        shift 2 ;;
       -i|--infer_input) infer_input="$2"; shift 2 ;;
       --out_data) out_data="$2"; shift 2 ;;
       -m|--out_models) out_models="$2"; shift 2 ;;
@@ -353,15 +382,24 @@ cmd_run_all() {
 cmd_report() {
   local models_dir="models"
   local data_file="data/data_prepared.rds"
+  local sources_file=""
   local output_file="reporte_entrenamiento.html"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -m|--models-dir) models_dir="$2"; shift 2 ;;
       -d|--data) data_file="$2"; shift 2 ;;
+      --sources)
+        if [[ $# -ge 2 && "${2:-}" != -* ]]; then
+          sources_file="$2"
+          shift 2
+        else
+          sources_file="$(resolve_default_sources_file)"
+          shift 1
+        fi ;;
       -o|--output) output_file="$2"; shift 2 ;;
       -h|--help)
-        echo "Uso: ./targetcnv.sh report [--models-dir models] [--data data/data_prepared.rds] [--output reporte_entrenamiento.html]"
+        echo "Uso: ./targetcnv.sh report [--models-dir models] [--data data/data_prepared.rds] [--sources data/reference/sources_citations.tsv] [--output reporte_entrenamiento.html]"
         exit 0 ;;
       *) echo -e "${RED}[ERROR] Opcion desconocida en report: $1${NC}"; exit 1 ;;
     esac
@@ -372,7 +410,74 @@ cmd_report() {
     -P models_dir:"$models_dir" \
     -P data_path:"$data_file" \
     -P data_file:"$data_file" \
+    -P sources_file:"$sources_file" \
     --output "$(basename "$output_file")"
+}
+
+cmd_transfer() {
+  local models_dir="models"
+  local donor_data="data/data_prepared.rds"
+  local cit_data="data/citrullifolium/data_prepared.rds"
+  local ste_data="data/stellatiglandulosum/data_prepared.rds"
+  local cit_gff_ref=""
+  local cit_captus_gff=""
+  local ste_captus_gff=""
+  local captus_stats=""
+  local dict_ref=""
+  local sources_file=""
+  local extra_species=""
+  local out_dir="results"
+  local output_file="reporte_transferencia.html"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -m|--models-dir) models_dir="$2"; shift 2 ;;
+      --donor-data) donor_data="$2"; shift 2 ;;
+      --cit-data) cit_data="$2"; shift 2 ;;
+      --ste-data) ste_data="$2"; shift 2 ;;
+      --cit-gff-ref) cit_gff_ref="$2"; shift 2 ;;
+      --cit-captus-gff) cit_captus_gff="$2"; shift 2 ;;
+      --ste-captus-gff) ste_captus_gff="$2"; shift 2 ;;
+      -s|--stats) captus_stats="$2"; shift 2 ;;
+      -d|--dict) dict_ref="$2"; shift 2 ;;
+      --sources)
+        if [[ $# -ge 2 && "${2:-}" != -* ]]; then
+          sources_file="$2"
+          shift 2
+        else
+          sources_file="$(resolve_default_sources_file)"
+          shift 1
+        fi ;;
+      --extra-species) extra_species="$2"; shift 2 ;;
+      --out-dir) out_dir="$2"; shift 2 ;;
+      -o|--output) output_file="$2"; shift 2 ;;
+      -h|--help)
+        echo "Uso: ./targetcnv.sh transfer [--models-dir models] [--cit-data data/citrullifolium/data_prepared.rds] [--ste-data data/stellatiglandulosum/data_prepared.rds] [--sources data/reference/sources_citations.tsv] [--output reporte_transferencia.html]"
+        exit 0 ;;
+      *) echo -e "${RED}[ERROR] Opcion desconocida en transfer: $1${NC}"; exit 1 ;;
+    esac
+  done
+
+  print_banner
+  echo -e "\n${BOLD}${BLUE}[TRANSFER] Compilando Reporte Multiespecie de Transferencia Filogenetica (${output_file})...${NC}"
+
+  quarto render transferability_report.qmd \
+    -P project_root:"$SCRIPT_DIR" \
+    -P models_dir:"$models_dir" \
+    -P donor_data:"$donor_data" \
+    -P cit_data:"$cit_data" \
+    -P ste_data:"$ste_data" \
+    -P cit_gff_ref:"$cit_gff_ref" \
+    -P cit_captus_gff:"$cit_captus_gff" \
+    -P ste_captus_gff:"$ste_captus_gff" \
+    -P captus_stats:"$captus_stats" \
+    -P dict_ref:"$dict_ref" \
+    -P sources_file:"$sources_file" \
+    -P extra_species:"$extra_species" \
+    -P out_dir:"$out_dir" \
+    --output "$(basename "$output_file")"
+
+  echo -e "${BOLD}${GREEN}✓ Reporte de transferencia filogenetica generado: ${CYAN}${output_file}${NC}\n"
 }
 
 # Enrutador principal de subcomandos
@@ -386,6 +491,8 @@ case "$SUBCOMMAND" in
     cmd_zenodo "$@" ;;
   infer|inference)
     cmd_infer "$@" ;;
+  transfer|transferability|report-transfer)
+    cmd_transfer "$@" ;;
   prepare|prep)
     Rscript ./scripts/01_prepare_data.R "$@" ;;
   train)

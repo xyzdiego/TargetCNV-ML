@@ -129,6 +129,13 @@ option_list <- list(
     default = file.path(project_root, "reporte_entrenamiento.html"),
     help = "Ruta del reporte HTML de salida [Por defecto: reporte_entrenamiento.html en la raiz del proyecto]",
     metavar = "FILE"
+  ),
+  make_option(
+    c("--sources"),
+    type = "character",
+    default = "",
+    help = "Ruta opcional al archivo TSV con las citas de fuentes genomicas y de homologia para el reporte HTML",
+    metavar = "FILE"
   )
 )
 
@@ -567,14 +574,16 @@ if (!opt$render_report) {
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
   rendered_in_root <- file.path(dirname(qmd_file), basename(out_html))
 
+  src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE))) else ""
   cmd_quarto <- sprintf(
-    "quarto render %s --output %s -P project_root:%s -P data_path:%s -P data_file:%s -P models_dir:%s",
+    "quarto render %s --output %s -P project_root:%s -P data_path:%s -P data_file:%s -P models_dir:%s%s",
     shQuote(qmd_file),
     shQuote(basename(out_html)),
     shQuote(project_root),
     shQuote(normalizePath(opt$data, mustWork = FALSE)),
     shQuote(normalizePath(opt$data, mustWork = FALSE)),
-    shQuote(normalizePath(opt$out_models, mustWork = FALSE))
+    shQuote(normalizePath(opt$out_models, mustWork = FALSE)),
+    src_arg
   )
   cat(sprintf("   -> Ejecutando Quarto: %s\n", cmd_quarto))
   res_q <- system(cmd_quarto)

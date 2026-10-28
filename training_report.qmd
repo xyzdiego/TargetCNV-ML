@@ -21,6 +21,7 @@ params:
   models_dir: "models"
   data_path: "data/data_prepared.rds"
   data_file: "data/data_prepared.rds"
+  sources_file: ""
 execute:
   echo: false
   warning: false
@@ -1060,6 +1061,41 @@ El conjunto de entrenamiento clasifica cada secuencia funcional de CAPTUS (`mark
 
 - **TP (`TRUE_POSITIVE`):** Secuencia que coincide espacialmente con el gen de referencia esperado.
 - **FP (`FALSE_POSITIVE`):** Alineamiento cruzado en otro gen, región no codificante o fragmento redundante.
+
+```{r training_sources_info, results="asis"}
+orig_tr_file <- if (!is.null(data_file) && nzchar(data_file)) basename(data_file) else "data_prepared.rds"
+tr_sample_id <- if (!is.null(datos) && "Sample" %in% colnames(datos) && nrow(datos) > 0) as.character(datos$Sample[1]) else NULL
+src_tr_df <- NULL
+if (!is.null(params$sources_file) && nzchar(trimws(params$sources_file))) {
+  cand_s <- c(params$sources_file, file.path(proj_root, params$sources_file), file.path(proj_root, "data", "reference", "sources_citations.tsv"), file.path(proj_root, "sources_citations.tsv"))
+  found_s <- cand_s[file.exists(cand_s)][1]
+  if (!is.na(found_s) && nzchar(found_s)) {
+    src_tr_df <- tryCatch(utils::read.delim(found_s, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  }
+}
+src_tr_hit <- NULL
+if (!is.null(src_tr_df) && nrow(src_tr_df) > 0 && "sample_id" %in% colnames(src_tr_df)) {
+  if (!is.null(tr_sample_id) && nzchar(tr_sample_id)) {
+    m_rows <- src_tr_df[tolower(trimws(src_tr_df$sample_id)) == tolower(trimws(tr_sample_id)), , drop = FALSE]
+    if (nrow(m_rows) > 0) src_tr_hit <- m_rows[1, , drop = FALSE]
+  }
+  if (is.null(src_tr_hit)) {
+    m_rows <- src_tr_df[tolower(trimws(src_tr_df$sample_id)) == "chromosome_default", , drop = FALSE]
+    if (nrow(m_rows) > 0) src_tr_hit <- m_rows[1, , drop = FALSE]
+  }
+}
+if (!is.null(src_tr_hit)) {
+  cat(paste0(
+    "<div class=\"formula-box\">",
+    sprintf("<b>• Fuente del Genoma de Referencia:</b> %s<br>", as.character(src_tr_hit$genome_source[1])),
+    sprintf("<b>• Fuente de Homología y Datos Génicos:</b> %s<br>", as.character(src_tr_hit$homology_source[1])),
+    sprintf("<b>• Archivo de Origen:</b> <code>%s</code>", orig_tr_file),
+    "</div>\n"
+  ))
+} else {
+  cat(sprintf("<div class=\"formula-box\"><b>• Archivo de Origen:</b> <code>%s</code></div>\n", orig_tr_file))
+}
+```
 
 ```{r summary_tp_fp_table}
 if (!is.null(datos) && "Validacion_Espacial" %in% colnames(datos)) {

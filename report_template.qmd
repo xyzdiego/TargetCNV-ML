@@ -24,6 +24,7 @@ params:
   cnv_annotated: "results/cnv_annotated_sequences.tsv"
   functional_genes: "results/functional_genes_catalog.tsv"
   transferability_benchmark: "results/transferability_benchmark.tsv"
+  sources_file: ""
   top_loci: 30
 execute:
   echo: false
@@ -179,6 +180,38 @@ make_export_dt <- function(df, caption_txt = NULL, page_len = 20) {
 ## Resumen General de la Inferencia y Consenso (7 Modelos)
 
 Cada secuencia funcional ensamblada por CAPTUS (`marker_type == NUC`) es evaluada de manera independiente por **7 métodos**: **4 clasificadores de Machine Learning** (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), **2 puntos de corte de Youden** (`pct_recovered`, `pct_identity`) y **1 modelo heurístico ponderado**. Las secuencias que suman al menos el mínimo de votos requerido se aceptan como `Homologo_Valido` y pasan a la estimación de copias por locus.
+
+```{r inference_sources_info, results="asis"}
+orig_inf_files <- paste(unique(basename(na.omit(c(params$consensus_verdicts, params$cnv_matrix, params$cnv_annotated)))), collapse = ", ")
+src_inf_df <- NULL
+if (!is.null(params$sources_file) && nzchar(trimws(params$sources_file))) {
+  cand_s <- c(params$sources_file, file.path(proj_root, params$sources_file), file.path(proj_root, "data", "reference", "sources_citations.tsv"), file.path(proj_root, "sources_citations.tsv"))
+  found_s <- cand_s[file.exists(cand_s)][1]
+  if (!is.na(found_s) && nzchar(found_s)) {
+    src_inf_df <- tryCatch(utils::read.delim(found_s, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
+  }
+}
+src_inf_hit <- NULL
+if (!is.null(src_inf_df) && nrow(src_inf_df) > 0 && "sample_id" %in% colnames(src_inf_df)) {
+  samp_ids <- if (!is.null(df_consenso) && "Sample" %in% colnames(df_consenso)) unique(as.character(df_consenso$Sample)) else character(0)
+  m_rows <- src_inf_df[tolower(trimws(src_inf_df$sample_id)) %in% tolower(trimws(samp_ids)), , drop = FALSE]
+  if (nrow(m_rows) == 0) {
+    m_rows <- src_inf_df[tolower(trimws(src_inf_df$sample_id)) == "chromosome_default", , drop = FALSE]
+  }
+  if (nrow(m_rows) > 0) src_inf_hit <- m_rows[1, , drop = FALSE]
+}
+if (!is.null(src_inf_hit)) {
+  cat(paste0(
+    "<div class=\"rule-box\">",
+    sprintf("<b>• Fuente de Referencia / Modelos:</b> %s<br>", as.character(src_inf_hit$genome_source[1])),
+    sprintf("<b>• Fuente de Homología y Datos Génicos:</b> %s<br>", as.character(src_inf_hit$homology_source[1])),
+    sprintf("<b>• Archivos de Origen:</b> <code>%s</code>", orig_inf_files),
+    "</div>\n"
+  ))
+} else {
+  cat(sprintf("<div class=\"rule-box\"><b>• Archivos de Origen:</b> <code>%s</code></div>\n", orig_inf_files))
+}
+```
 
 ```{r kpi_cards, results='asis'}
 if (!is.null(df_consenso) && nrow(df_consenso) > 0) {

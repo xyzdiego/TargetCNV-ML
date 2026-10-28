@@ -6,7 +6,7 @@
 #'
 #' Extrae el identificador limpio del ortogrupo (OG) y construye un ID compatible
 #' con la nomenclatura de contigs ensamblados en el GFF de CAPTUS (OGxxxx__00).
-#' Respeta la logica exacta de el flujo de referencia.
+#' Respeta la logica exacta del flujo de referencia.
 #'
 #' @param df Data frame con las estadisticas crudas de CAPTUS (captus-extract_stats.tsv).
 #' @param ref_col Nombre de la columna que contiene la referencia u ortogrupo.
@@ -110,7 +110,6 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
     }
   }, error = function(e) {
     warning(sprintf("[find_spatial_overlaps] GenomicRanges::findOverlaps fallo (%s); ejecutando cruce espacial directo sobre slots S4 (@seqnames, @ranges, @strand).", conditionMessage(e)), call. = FALSE)
-    # Respaldo exacto por intervalos S4 (sin requerir GenomeInfoDb)
     q_seq <- as.character(query_gff@seqnames)
     s_seq <- as.character(subject_gff@seqnames)
     if (length(base::intersect(unique(q_seq), unique(s_seq))) == 0) {
@@ -171,11 +170,12 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
 
 #' Extrae el locus de referencia directamente desde el atributo Target del GFF de CAPTUS
 #'
-#' Diseñado para genomas altamente fragmentados (ej. S. stellatiglandulosum) donde
-#' el atributo Target codifica `<transcript_id>-<OG_ID> <coordenadas>`.
+#' Diseñado para genomas altamente fragmentados a escala de contigs (ej. S. stellatiglandulosum)
+#' donde el atributo Target codifica `<transcript_id>-<OG_ID> <coordenadas>` (ej. `g65393.t1-OG0000254 1-148`).
+#' Reproduce exactamente las lineas 1343-1353 de Workflow_Central_Sin_Rescate.R.
 #'
 #' @param query_gff Objeto GRanges de CAPTUS (protein_match:NUC).
-#' @return Data frame con `ID_Captus`, `OG_Captus`, `Locus_Ref_Limpio` y `Contig_Name`.
+#' @return Data frame con `ID_Captus`, `OG_Captus`, `Locus_Ref_Limpio`, `Contig_Name` y `Num_Gen`.
 #' @export
 extract_target_loci_from_gff <- function(query_gff) {
   stopifnot(inherits(query_gff, "GRanges"))
@@ -197,20 +197,22 @@ extract_target_loci_from_gff <- function(query_gff) {
     stringsAsFactors = FALSE
   ) %>%
     dplyr::mutate(
-      Locus_Ref_Limpio = stringr::str_remove(Locus_Ref_Limpio, "\\.[0-9]+$")
+      Num_Gen = suppressWarnings(as.numeric(stringr::str_extract(Locus_Ref_Limpio, "(?<=^g)[0-9]+")))
     ) %>%
     dplyr::distinct()
 }
 
 #' Construye el diccionario de homologia teorica a partir del archivo Excel de referencia
 #'
-#' Reproduce con exactitud matematica el filtrado de vias metabolicas y ensamblajes
-#' de `el flujo de referencia` cuando se proporciona `Genes_Capture_May_2026.xlsx`,
-#' o carga directamente cualquier tabla `.xlsx`, `.tsv` o `.csv` personalizada.
+#' Reproduce con exactitud matematica el filtrado de vias metabolicas, hojas de base de datos
+#' y ensamblajes de `Workflow_Central_Sin_Rescate.R` para:
+#' - `Storvum` (escala cromosomica: `CNV_Benoit` + `Contigs_probe_design` + `Sequences_Torva`)
+#' - `Scitrullifolium` (escala cromosomica: `CNV_Benoit` + `Contigs_probe_design` + `S._citr`)
+#' - `S_stella` (escala de contigs: `CNV_Perez` + `Contigs_probe_design` + `Sequences_Torva` + Puente `OG_ID <-> HOG_ID`)
 #'
 #' @param dict_path Ruta al archivo de diccionario (.xlsx, .tsv, .csv).
 #' @param species Especie/muestra objetivo ("Storvum", "Scitrullifolium", "S_stella" o NULL).
-#' @return Lista con `dict_df` (columnas `Locus_Benoit`, `OG_Benoit`) y opcionalmente `hog_bridge`.
+#' @return Data frame con columnas `Locus_Benoit` y `OG_Benoit` (y atributo `puente_og_hog` en modo contig/HOG).
 #' @export
 load_reference_dictionary <- function(dict_path, species = NULL) {
   stopifnot(file.exists(dict_path))
@@ -228,48 +230,60 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
     suppressPackageStartupMessages(library(readxl))
     sheets <- readxl::excel_sheets(dict_path)
 
-    # Caso 1: S. stellatiglandulosum (puente HOG -> OG desde CNV_Perez)
+    # Caso 1: S. stellatiglandulosum (Genoma fragmentado a escala de contigs: puente HOG -> OG desde CNV_Perez)
     if (!is.null(species) && grepl("stella", species, ignore.case = TRUE) &&
         all(c("CNV_Perez", "Contigs_probe_design", "Sequences_Torva") %in% sheets)) {
       columna_ste <- "S._stellatiglandulosum"
       cnv_ste_raw <- readxl::read_excel(dict_path, sheet = "CNV_Perez") %>%
         dplyr::select(HOG_ID, Probe_ID, dplyr::all_of(columna_ste)) %>%
         dplyr::filter(!is.na(.data[[columna_ste]]) & trimws(.data[[columna_ste]]) != "")
-      probes_validos <- cnv_ste_raw$Probe_ID
+      probes_validos_ste <- cnv_ste_raw$Probe_ID
 
-      contigs_probe <- readxl::read_excel(dict_path, sheet = "Contigs_probe_design") %>%
+      contigs_probe_ste <- readxl::read_excel(dict_path, sheet = "Contigs_probe_design") %>%
         dplyr::select(Probe_ID, Contig_name, HOG_ID_Solanum, OG_ID_Pangenomes,
                       Correcte_Contig_Name, Short_name, Pathway, Refseq_RNA, DAVID_Annotation) %>%
-        dplyr::filter(Probe_ID %in% probes_validos)
+        dplyr::filter(Probe_ID %in% probes_validos_ste)
+
+      cnv_ste <- cnv_ste_raw %>%
+        dplyr::left_join(contigs_probe_ste %>% dplyr::select(Probe_ID, OG_ID = OG_ID_Pangenomes), by = "Probe_ID") %>%
+        dplyr::select(OG_ID, Probe_ID, dplyr::all_of(columna_ste))
 
       sequences_ste <- readxl::read_excel(dict_path, sheet = "Sequences_Torva") %>%
-        dplyr::filter(stringr::str_detect(Assembly, "stellati"), Probe_ID %in% probes_validos)
+        dplyr::filter(stringr::str_detect(Assembly, "stellati")) %>%
+        dplyr::filter(Probe_ID %in% probes_validos_ste)
 
-      # Conservar todas las correspondencias validas HOG_ID <-> OG_ID ponderadas por frecuencia real antes de distinct()
+      datos_unificados_ste <- cnv_ste %>%
+        dplyr::select(-OG_ID) %>%
+        dplyr::left_join(contigs_probe_ste, by = "Probe_ID") %>%
+        dplyr::left_join(sequences_ste %>% dplyr::select(-Orthogroup_ID), by = "Probe_ID")
+
+      dict_ste <- datos_unificados_ste %>%
+        dplyr::filter(trimws(Pathway) %in% pathways_filtro) %>%
+        dplyr::select(-dplyr::all_of(columna_ste)) %>%
+        dplyr::left_join(sequences_ste %>% dplyr::select(Seq, Orthogroup_ID), by = "Seq") %>%
+        dplyr::filter(!is.na(Contig_ID)) %>%
+        dplyr::select(Locus_Benoit = Contig_ID, OG_Benoit = Orthogroup_ID) %>%
+        dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
+        dplyr::distinct()
+
+      # Tabla puente OG <-> HOG exacta de Workflow_Central_Sin_Rescate.R (lineas 1361-1369)
       puente_og_hog <- readxl::read_excel(dict_path, sheet = "Contigs_probe_design") %>%
         dplyr::select(OG_ID = OG_ID_Pangenomes, HOG_ID = HOG_ID_Solanum) %>%
         dplyr::filter(!is.na(OG_ID), !is.na(HOG_ID)) %>%
-        dplyr::count(OG_ID, HOG_ID, name = "n_pair") %>%
-        dplyr::arrange(dplyr::desc(n_pair)) %>%
-        dplyr::select(OG_ID, HOG_ID) %>%
-        dplyr::distinct()
+        dplyr::distinct() %>%
+        dplyr::add_count(OG_ID, name = "n_hog") %>%
+        dplyr::group_by(OG_ID) %>%
+        dplyr::slice_max(order_by = n_hog, n = 1, with_ties = FALSE) %>%
+        dplyr::ungroup() %>%
+        dplyr::select(OG_ID, HOG_ID)
 
-      dict_ste <- cnv_ste_raw %>%
-        dplyr::left_join(contigs_probe, by = "Probe_ID") %>%
-        dplyr::left_join(sequences_ste %>% dplyr::select(-Orthogroup_ID), by = "Probe_ID") %>%
-        dplyr::filter(trimws(Pathway) %in% pathways_filtro) %>%
-        dplyr::left_join(sequences_ste %>% dplyr::select(Seq, Orthogroup_ID), by = "Seq") %>%
-        dplyr::filter(!is.na(Contig_ID)) %>%
-        dplyr::select(Locus_Benoit = Contig_ID, HOG_Esperado = Orthogroup_ID) %>%
-        dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
-        dplyr::left_join(puente_og_hog, by = c("HOG_Esperado" = "HOG_ID"), relationship = "many-to-many") %>%
-        dplyr::transmute(Locus_Benoit = Locus_Benoit, OG_Benoit = dplyr::coalesce(OG_ID, HOG_Esperado)) %>%
-        dplyr::distinct()
-
+      attr(dict_ste, "puente_og_hog") <- puente_og_hog
+      attr(dict_ste, "genome_scale")  <- "contig"
+      attr(dict_ste, "db_sheets")     <- c("CNV_Perez", "Contigs_probe_design", "Sequences_Torva (Assembly: stellati)")
       return(dict_ste)
     }
 
-    # Caso 2: S. citrullifolium (hoja S._citr + CNV_Benoit)
+    # Caso 2: S. citrullifolium (Genoma a escala cromosomica: hoja S._citr + CNV_Benoit)
     if (!is.null(species) && grepl("citr", species, ignore.case = TRUE) &&
         all(c("CNV_Benoit", "Contigs_probe_design", "S._citr") %in% sheets)) {
       cnv_cit <- readxl::read_excel(dict_path, sheet = "CNV_Benoit") %>%
@@ -297,10 +311,12 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
         dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
         dplyr::distinct()
 
+      attr(dict_cit, "genome_scale") <- "chromosome"
+      attr(dict_cit, "db_sheets")    <- c("CNV_Benoit", "Contigs_probe_design", "S._citr")
       return(dict_cit)
     }
 
-    # Caso 3: S. torvum (experimento central en el flujo de referencia)
+    # Caso 3: S. torvum (Experimento central a escala cromosomica)
     if (all(c("CNV_Benoit", "Contigs_probe_design", "Sequences_Torva") %in% sheets)) {
       cnv_benoit <- readxl::read_excel(dict_path, sheet = "CNV_Benoit") %>%
         dplyr::select(OG_ID, Probe_ID, dplyr::any_of(c("S._torvum", "S_torvum")))
@@ -334,6 +350,8 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
         dplyr::mutate(Locus_Benoit = stringr::str_remove(Locus_Benoit, "\\.[0-9]+$")) %>%
         dplyr::distinct()
 
+      attr(dict_benoit, "genome_scale") <- "chromosome"
+      attr(dict_benoit, "db_sheets")    <- c("CNV_Benoit", "Contigs_probe_design", "Sequences_Torva (Assembly: S. torvum Benoit et al)")
       return(dict_benoit)
     }
 
@@ -361,11 +379,15 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
 
 #' Clasifica los hits espaciales contrastando contra el diccionario de ortologia
 #'
-#' @param df_cruces Data frame obtenido con `find_spatial_overlaps()`.
+#' Soporta tanto el cruce directo OG == OG para genomas a escala cromosomica (ej. S. torvum y S. citrullifolium)
+#' como el cruce con tabla puente OG <-> HOG para genomas a escala de contigs (ej. S. stellatiglandulosum),
+#' reproduciendo exactamente Workflow_Central_Sin_Rescate.R.
+#'
+#' @param df_cruces Data frame obtenido con `find_spatial_overlaps()` o `extract_target_loci_from_gff()`.
 #' @param dict_ref Data frame del diccionario con identificadores de locus y ortogrupo.
 #' @param locus_col Columna de locus en `df_cruces`.
 #' @param dict_locus_col Columna de locus en `dict_ref`.
-#' @param dict_og_col Columna de ortogrupo en `dict_ref`.
+#' @param dict_og_col Columna de ortogrupo/HOG en `dict_ref`.
 #' @return Data frame con `ID_Captus`, `Validacion_Espacial`, `Doble_Control_Biologico` y `Locus_Ref_Limpio`.
 #' @export
 classify_spatial_hits <- function(df_cruces,
@@ -386,6 +408,46 @@ classify_spatial_hits <- function(df_cruces,
     ))
   }
 
+  puente_og_hog <- attr(dict_ref, "puente_og_hog")
+
+  # Modo Genoma a Escala de Contigs con Puente OG <-> HOG (Workflow_Central_Sin_Rescate.R lineas 1376-1415)
+  if (!is.null(puente_og_hog)) {
+    df_clasificacion <- df_cruces %>%
+      dplyr::left_join(dict_ref, by = stats::setNames(dict_locus_col, locus_col), relationship = "many-to-many") %>%
+      dplyr::left_join(puente_og_hog, by = c("OG_Captus" = "OG_ID"), relationship = "many-to-one") %>%
+      dplyr::mutate(
+        ID_Captus = dplyr::if_else(
+          stringr::str_detect(ID_Captus, "__[0-9]+$"),
+          ID_Captus,
+          paste0(ID_Captus, "__00")
+        ),
+        Validacion_Estricta = dplyr::case_when(
+          !is.na(.data[[dict_og_col]]) & !is.na(HOG_ID) & HOG_ID == .data[[dict_og_col]] ~ "TRUE_POSITIVE",
+          TRUE ~ "FALSE_POSITIVE"
+        ),
+        Validacion_Espacial = Validacion_Estricta,
+        Doble_Control_Biologico = dplyr::case_when(
+          Validacion_Estricta == "TRUE_POSITIVE" ~ "1_Validado_Exacto",
+          !is.na(.data[[dict_og_col]]) & (is.na(HOG_ID) | HOG_ID != .data[[dict_og_col]]) ~ "3_Hit_Cruzado_OG_Vecino",
+          TRUE ~ "4_Expansion_No_Anotada_o_Ruido"
+        ),
+        prioridad = dplyr::case_when(
+          Doble_Control_Biologico == "1_Validado_Exacto" ~ 0L,
+          TRUE ~ 1L
+        )
+      ) %>%
+      dplyr::arrange(prioridad) %>%
+      dplyr::distinct(ID_Captus, .keep_all = TRUE) %>%
+      dplyr::select(
+        ID_Captus,
+        Validacion_Espacial,
+        Doble_Control_Biologico,
+        dplyr::all_of(locus_col)
+      )
+    return(df_clasificacion)
+  }
+
+  # Modo Genoma a Escala Cromosomica con OG_ID directo (Workflow_Central_Sin_Rescate.R lineas 100-117 y 1015-1034)
   df_clasificacion <- df_cruces %>%
     dplyr::mutate(
       ID_Captus = dplyr::if_else(
@@ -402,7 +464,7 @@ classify_spatial_hits <- function(df_cruces,
       ),
       Doble_Control_Biologico = dplyr::case_when(
         Validacion_Espacial == "TRUE_POSITIVE" ~ "1_Validado_Benoit_Exacto",
-        !is.na(.data[[dict_og_col]]) & OG_Captus != .data[[dict_og_col]] ~ "2_Hit_Cruzado_Homologo_Vecino",
+        !is.na(.data[[dict_og_col]]) & OG_Captus != .data[[dict_og_col]] ~ "2_Hit_Cruzado_OG_Vecino",
         is.na(.data[[dict_og_col]]) ~ "3_Expansion_Nueva_Genoma"
       ),
       prioridad = dplyr::if_else(Validacion_Espacial == "TRUE_POSITIVE", 0L, 1L)
@@ -493,6 +555,117 @@ calculate_locus_deltas <- function(df,
       delta_pct_identity = max(.data[[identity_col]], na.rm = TRUE) - .data[[identity_col]]
     ) %>%
     dplyr::ungroup()
+}
+
+#' Prepara de extremo a extremo el dataset etiquetado (TP/FP) de una especie segun la escala de su genoma
+#'
+#' Ejecuta el flujo completo de preparacion para una especie a escala cromosomica (`genome_scale = "chromosome"`,
+#' modo `overlap` con GFF3 de genes) o a escala de contigs (`genome_scale = "contig"`, modo `target_attr`
+#' extrayendo el locus desde el atributo `Target` del GFF de CAPTUS y aplicando el puente `OG_ID <-> HOG_ID`).
+#'
+#' @param sample_name Nombre exacto de la muestra en `captus_stats` (ej. `"Scitrullifolium"` o `"S_stella"`).
+#' @param genome_scale Escala del genoma: `"chromosome"` (escala cromosomica) o `"contig"` (escala de contigs).
+#' @param captus_gff Ruta al archivo GFF de contigs de CAPTUS (`protein_match:NUC`).
+#' @param captus_stats Ruta al archivo `captus-extract_stats.tsv`.
+#' @param dict_ref Ruta al archivo Excel/TSV de diccionario (`Genes_Capture_May_2026.xlsx`).
+#' @param gff_ref Ruta al archivo GFF3 de genes del genoma de referencia (obligatorio si `genome_scale == "chromosome"`).
+#' @param save_rds Ruta opcional para guardar el data frame preparado (.rds).
+#' @return Lista con `data` (data frame preparado), `metadata` (informacion algoritmica y de base de datos).
+#' @export
+prepare_transfer_species_data <- function(sample_name,
+                                          genome_scale = c("chromosome", "contig"),
+                                          captus_gff,
+                                          captus_stats,
+                                          dict_ref,
+                                          gff_ref = NULL,
+                                          save_rds = NULL) {
+  genome_scale <- match.arg(genome_scale)
+  stopifnot(file.exists(captus_gff), file.exists(captus_stats), file.exists(dict_ref))
+  if (genome_scale == "chromosome" && (is.null(gff_ref) || !file.exists(gff_ref))) {
+    stop(sprintf("[ERROR] Para genoma a escala cromosomica (%s) se requiere un archivo gff_ref valido.", sample_name), call. = FALSE)
+  }
+
+  suppressPackageStartupMessages(library(rtracklayer))
+  gff_captus_raw <- rtracklayer::import(captus_gff)
+  gff_captus <- filter_gff_features(gff_captus_raw, feature_type = "protein_match:NUC")
+
+  n_genes_ref <- NA_integer_
+  if (genome_scale == "chromosome") {
+    gff_ref_raw <- rtracklayer::import(gff_ref)
+    genes_ref <- filter_gff_features(gff_ref_raw, feature_type = "gene")
+    n_genes_ref <- length(genes_ref)
+    df_cruces <- find_spatial_overlaps(query_gff = gff_captus, subject_gff = genes_ref, ignore_strand = FALSE)
+  } else {
+    df_cruces <- extract_target_loci_from_gff(gff_captus)
+  }
+
+  dict_df <- load_reference_dictionary(dict_ref, species = sample_name)
+  puente_og_hog <- attr(dict_df, "puente_og_hog")
+  db_sheets     <- attr(dict_df, "db_sheets")
+
+  n_ogs_captus <- length(unique(df_cruces$OG_Captus))
+  n_ogs_bridge <- if (!is.null(puente_og_hog)) sum(unique(df_cruces$OG_Captus) %in% puente_og_hog$OG_ID) else n_ogs_captus
+
+  col_locus <- intersect(c("Locus_Benoit", "Locus_Ref_Limpio", "Locus", "gene_id"), colnames(dict_df))[1]
+  col_og    <- intersect(c("OG_Benoit", "OG_ID", "Orthogroup_ID", "OG"), colnames(dict_df))[1]
+
+  df_clasificacion <- classify_spatial_hits(
+    df_cruces = df_cruces,
+    dict_ref = dict_df,
+    locus_col = "Locus_Ref_Limpio",
+    dict_locus_col = col_locus,
+    dict_og_col = col_og
+  )
+
+  stats_crudo <- utils::read.delim(captus_stats, header = TRUE, stringsAsFactors = FALSE) %>%
+    dplyr::filter(sample_name == !!sample_name)
+  stats_limpio <- clean_captus_ids(stats_crudo, ref_col = "ref_name", hit_col = "hit")
+
+  stats_integrado <- stats_limpio %>%
+    dplyr::left_join(df_clasificacion, by = c("ID_GFF_Compatible" = "ID_Captus")) %>%
+    dplyr::filter(marker_type == "NUC") %>%
+    dplyr::mutate(
+      Validacion_Espacial = tidyr::replace_na(Validacion_Espacial, "FALSE_POSITIVE"),
+      Doble_Control_Biologico = tidyr::replace_na(Doble_Control_Biologico, "4_Ruido_Intergenico_o_Intron"),
+      ref_len_matched = as.numeric(ref_len_matched),
+      pct_recovered = as.numeric(pct_recovered),
+      pct_identity = as.numeric(pct_identity),
+      score = as.numeric(score),
+      wscore = as.numeric(wscore)
+    )
+
+  stats_sin_redundancias <- resolve_redundancies(
+    df = stats_integrado,
+    locus_col = "Locus_Ref_Limpio",
+    class_col = "Validacion_Espacial"
+  )
+
+  stats_preparado <- calculate_locus_deltas(
+    df = stats_sin_redundancias,
+    locus_col = "locus",
+    score_col = "score",
+    wscore_col = "wscore",
+    identity_col = "pct_identity"
+  )
+
+  attr(stats_preparado, "genome_scale") <- genome_scale
+  attr(stats_preparado, "target_mode")  <- if (genome_scale == "chromosome") "overlap" else "target_attr"
+  attr(stats_preparado, "db_sheets")    <- db_sheets
+  attr(stats_preparado, "n_ogs_captus") <- n_ogs_captus
+  attr(stats_preparado, "n_ogs_bridge") <- n_ogs_bridge
+  attr(stats_preparado, "n_genes_ref")  <- n_genes_ref
+  attr(stats_preparado, "n_hits_gff")   <- nrow(df_cruces)
+
+  if (!is.null(save_rds)) {
+    dir.create(dirname(save_rds), recursive = TRUE, showWarnings = FALSE)
+    saveRDS(stats_preparado, file = save_rds)
+    tsv_out <- sub("\\.rds$", ".tsv", save_rds)
+    if (tsv_out != save_rds) {
+      utils::write.table(stats_preparado, file = tsv_out, sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+  }
+
+  return(stats_preparado)
 }
 
 #' Extrae la Matriz de Variacion en el Numero de Copias (CNV) con regla de un solo umbral

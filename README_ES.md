@@ -1,12 +1,12 @@
 # TargetCNV-ML: Aprendizaje Automático e Inferencia Espacial para Variaciones en el Número de Copias en Captura de Genes
 
-[🇬🇧 English Version](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [📗 Guía de Ejecución (ES)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [📘 Execution Guide (EN)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md)
+[🇬🇧 English Version](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [📗 Guía de Ejecución (ES)](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [📘 Execution Guide (EN)](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md)
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
-[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
-[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
-[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
+[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
+[](https://www.r-project.org/)
+[](https://opensource.org/licenses/MIT)
+[](#inicio-rápido-batería-de-pruebas)
+[](https://rstudio.github.io/renv/)
 
 Un paquete de software bioinformático modular, reproducible y ejecutable por línea de comandos (CLI), diseñado para detectar **Variaciones en el Número de Copias (CNV)** y resolver **expansiones de genes homólogos** a partir de datos de secuenciación masiva por Captura de Genes (*Target Capture*).
 
@@ -56,7 +56,7 @@ TargetCNV-ML/
 │   └── 03_cnv_inference.R       # Paso 3: Inferencia de CNV mediante consenso de 7 modelos y reporte de inferencia
 │
 ├── data/
-│   ├── reference/               # Anotaciones genómicas GFF3 de referencia y diccionarios de homología
+│   ├── reference/               # Anotaciones GFF3 de referencia, diccionarios de homología y sources_citations.tsv
 │   ├── CAPTUS_Muestras/         # Estadísticas de ensamblaje CAPTUS multimuestra
 │   └── test_data/               # Conjunto de datos simulado y liviano (<25 KB) para pruebas automáticas
 │
@@ -128,7 +128,7 @@ Valide su instalación ejecutando la batería de pruebas automatizada de punta a
 >    ```bash
 >    ./targetcnv.sh zenodo
 >    ```
-> 2. O descárguelo y descomprímalo manualmente en la raíz del proyecto desde el DOI de Zenodo [10.5281/zenodo.23463987](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987):
+> 2. O descárguelo y descomprímalo manualmente en la raíz del proyecto desde el DOI de Zenodo [10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987):
 >    ```bash
 >    curl -L -o TargetCNV_Models.zip https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content
 >    unzip -o TargetCNV_Models.zip
@@ -229,6 +229,7 @@ Calcula los umbrales univariados óptimos de Youden, ejecuta una búsqueda en cu
 | | `--include_hit` | Bandera | Incluir el rango ordinal de hit de CAPTUS como predictor (por defecto: `FALSE`; no compatible con Paso 3) |
 | | `--render_report` / `--no_render_report` | Bandera | Compilar (por defecto: `TRUE`) u omitir el reporte interactivo HTML |
 | `-r` | `--report_file` | Archivo | Ruta de destino del reporte HTML (por defecto: `reporte_entrenamiento.html`) |
+| | `--sources` | Archivo | Archivo TSV opcional (`data/reference/sources_citations.tsv`) con las citas de las fuentes genómicas y publicaciones para el reporte HTML (si se omite, solo se muestra el archivo de origen) |
 
 ---
 
@@ -257,6 +258,7 @@ Aplica el **Sistema de Consenso de 7 Modelos** (Regla de Mayoría $\ge 4/7$ voto
 | `-t` | `--top_loci` | Entero | Número de familias génicas homólogas más abundantes en el heatmap (por defecto: `30`) |
 | | `--render_report` / `--no_render_report` | Bandera | Compilar (por defecto: `TRUE`) u omitir el reporte HTML interactivo de inferencia |
 | `-r` | `--report_file` | Archivo | Nombre del archivo HTML de inferencia dentro de `--out_dir` (por defecto: `reporte_inferencia.html`) |
+| | `--sources` | Archivo | Archivo TSV opcional (`data/reference/sources_citations.tsv`) con las citas de las fuentes genómicas y publicaciones para el reporte HTML (si se omite, solo se muestra el archivo de origen) |
 
 ---
 
@@ -270,7 +272,11 @@ Aplica el **Sistema de Consenso de 7 Modelos** (Regla de Mayoría $\ge 4/7$ voto
 
 ---
 
-## Citación
+## Citación y Fuentes de Datos de Referencia
+
+- **Genomas de referencia a escala cromosómica (*Solanum torvum* y *Solanum citrullifolium*):** Reportados y publicados en el portal **Solanum Pan-Genomics** ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), en **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)) y en **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.google.com/search?q=https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Los datos de genes y ortogrupos (`OG_ID`) provienen de: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Genoma de referencia a escala de cóntigos (*Solanum stellatiglandulosum*):** El genoma fue reportado en **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) con **Accession: `PRJNA1070281` (ID: `1070281`)** por el **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Los datos de genes y homología (`HOG_ID`) provienen de: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://www.google.com/search?q=https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://www.google.com/search?q=https://doi.org/10.1007/s11103-026-01718-6).
+- *(Para insertar estas citas en los reportes interactivos HTML, suministre `--sources data/reference/sources_citations.tsv` o `-P sources_file:data/reference/sources_citations.tsv`; de lo contrario, los reportes mostrarán únicamente el archivo de origen).*
 
 Si utiliza **TargetCNV-ML** en su investigación académica o en pipelines de genómica aplicada, por favor cite el software y el trabajo de tesis correspondiente:
 

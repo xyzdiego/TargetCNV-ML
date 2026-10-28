@@ -1,12 +1,12 @@
 # Guía de Ejecución de TargetCNV-ML
 
-[🇬🇧 English Execution Guide](https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md) | [🇪🇸 README en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md) | [🇬🇧 English README](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md)
+[🇬🇧 English Execution Guide](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md) | [🇪🇸 README en Español](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md) | [🇬🇧 English README](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md)
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
-[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
-[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
-[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
+[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
+[](https://www.r-project.org/)
+[](https://opensource.org/licenses/MIT)
+[](#inicio-rápido-batería-de-pruebas)
+[](https://rstudio.github.io/renv/)
 
 **TargetCNV-ML** es un paquete bioinformático modular, reproducible y ejecutable por línea de comandos (CLI) que detecta **Variaciones en el Número de Copias (CNV)** y resuelve **expansiones de genes homólogos** a partir de secuencias obtenidas mediante captura de genes (*Target Capture*).
 
@@ -18,7 +18,7 @@ En esta guía encontrarás:
 2. Estructura de carpetas, archivos y diagrama de flujo del repositorio.
 3. Uso del orquestador principal en una línea (`./targetcnv.sh`) y descripción detallada de todos los parámetros de los tres módulos (`01_prepare_data.R`, `02_train_models.R`, `03_cnv_inference.R`) y de los dos reportes HTML en Quarto (`training_report.qmd` y `report_template.qmd`).
 4. **Flujo 1:** Prueba rápida con los datos simulados incluidos en el repositorio (*Minimal Working Example* / MWE).
-5. **Flujo 2:** Descarga, uso y actualización de los modelos preentrenados publicados en **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)).
+5. **Flujo 2:** Descarga, uso y actualización de los modelos preentrenados publicados en **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)).
 6. **Flujo 3:** Entrenamiento con nuevos datos genómicos y pruebas de **transferibilidad entre especies** (tanto en genomas ensamblados a nivel de cromosoma como *Solanum citrullifolium*, como en genomas fragmentados como *Solanum stellatiglandulosum*).
 7. **Flujo 4:** Reproducción paso a paso del experimento de referencia con ***Solanum torvum***.
 8. Citación y licencia.
@@ -86,7 +86,7 @@ TargetCNV-ML/
 │   └── 03_cnv_inference.R       # Paso 3: Inferencia de CNV mediante consenso de 7 modelos y reporte de inferencia
 │
 ├── data/
-│   ├── reference/               # Anotaciones genómicas GFF3 de referencia y diccionarios de homología
+│   ├── reference/               # Anotaciones GFF3 de referencia, diccionarios de homología y sources_citations.tsv
 │   ├── CAPTUS_Muestras/         # Estadísticas de ensamblaje CAPTUS multimuestra
 │   └── test_data/               # Conjunto de datos simulado y liviano (<25 KB) para pruebas automáticas
 │
@@ -159,7 +159,7 @@ Este módulo identifica qué cóntigos ensamblados por CAPTUS corresponden a gen
 | `-g` | `--gff_ref` | Archivo | **SÍ**\* | *Ninguno* | Archivo GFF/GFF3 con la anotación de genes del genoma de referencia (registros `gene`). \*Requerido en modo `overlap`. |
 | `-c` | `--captus_gff` | Archivo | **SÍ** | *Ninguno* | Archivo GFF de cóntigos ensamblados por CAPTUS (registros `protein_match:NUC`). |
 | `-s` | `--captus_stats` | Archivo | **SÍ** | *Ninguno* | Archivo `captus-extract_stats.tsv` con las métricas numéricas de alineamiento de CAPTUS. |
-| `-d` | `--dict_ref` | Archivo | No | `NULL` | Tabla de correspondencia entre genes y ortogrupos (`.xlsx`, `.tsv` o `.csv`). Compatible con el archivo multi-hoja `Genes_Capture_May_2026.xlsx` o tablas simples. |
+| `-d` | `--dict_ref` | Archivo | No | `NULL` | Tabla de correspondencia entre genes y ortogrupos (`.xlsx`, `.tsv` o `.csv`) suministrada por el usuario (catálogo directo `OG_ID` o jerárquico `HOG_ID` con tabla puente `OG_ID <-> HOG_ID`). |
 | `-p` | `--sample` | Texto | No | `NULL` | Nombre de la muestra a filtrar dentro de `captus_stats` (ej. `Storvum`, `Scitrullifolium`, `S_stella`). |
 | | `--target_mode` | Texto | No | `overlap` | `'overlap'`: cruza coordenadas con `--gff_ref`. `'target_attr'`: extrae el gen de referencia desde el atributo `Target` del GFF de CAPTUS (útil en genomas fragmentados). |
 | `-o` | `--out_dir` | Carpeta | No | `data/` | Carpeta donde se guardarán los archivos preparados (`data_prepared.rds` y `data_prepared.tsv`). |
@@ -208,6 +208,7 @@ Con los datos etiquetados del Paso 1, este módulo entrena y compara **24 métod
 | | `--render_report` | Bandera | No | `TRUE` | Genera automáticamente el reporte HTML al terminar el entrenamiento. |
 | | `--no_render_report` | Bandera | No | - | No genera el reporte HTML (útil en servidores sin Quarto). |
 | `-r` | `--report_file` | Archivo | No | `reporte_entrenamiento.html` | Nombre y ruta del archivo HTML del reporte de entrenamiento. |
+| | `--sources` | Archivo | No | `""` | Archivo TSV opcional (`data/reference/sources_citations.tsv`) con las citas de las fuentes genómicas y publicaciones para insertar en el reporte HTML (si se omite, solo se muestra el archivo de origen). |
 | `-h` | `--help` | Bandera | No | - | Muestra la ayuda en pantalla. |
 
 #### Métricas Incluidas en las Tablas de Resultados (16 Columnas)
@@ -275,6 +276,7 @@ Este módulo toma la tabla de estadísticas de CAPTUS de muestras nuevas, filtra
 | `-t` | `--top_loci` | Entero | No | `30` | Cantidad de loci con más copias que se mostrarán en el mapa de calor. |
 | | `--render_report` / `--no_render_report` | Bandera | No | `TRUE` | Compila automáticamente (por defecto) u omite el reporte HTML interactivo `reporte_inferencia.html`. |
 | `-r` | `--report_file` | Archivo | No | `reporte_inferencia.html` | Nombre del archivo HTML del reporte de inferencia dentro de `--out_dir`. |
+| | `--sources` | Archivo | No | `""` | Archivo TSV opcional (`data/reference/sources_citations.tsv`) con las citas de las fuentes genómicas y publicaciones para insertar en el reporte HTML (si se omite, solo se muestra el archivo de origen). |
 | `-h` | `--help` | Bandera | No | - | Muestra la ayuda en pantalla. |
 
 #### Archivos Generados en `<out_dir>/`
@@ -309,9 +311,15 @@ Este módulo toma la tabla de estadísticas de CAPTUS de muestras nuevas, filtra
     -P consensus_verdicts:"results/consensus_verdicts.tsv" \
     -P cnv_matrix:"results/cnv_matrix.tsv" \
     -P cnv_annotated:"results/cnv_annotated_sequences.tsv" \
+    -P sources_file:"data/reference/sources_citations.tsv" \
     -P top_loci:30 \
     --output "reporte_inferencia.html"
   ```
+- **Reporte de Transferencia Filogenética (`transferability_report.qmd` $\rightarrow$ `reporte_transferencia.html`):**
+  ```bash
+  ./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
+  ```
+  *(Nota: En todos los reportes, si se suministra `--sources` / `-P sources_file`, se insertan las citas del repositorio genómico y de las publicaciones desde `sources_citations.tsv`; de lo contrario, no se muestra información externa y únicamente se indica el archivo de origen).*
 
 ---
 
@@ -334,7 +342,7 @@ Este comando ejecuta de manera aislada (sin sobrescribir `models/` ni `results/`
 ## 5. Flujo 2: Descarga, Uso y Actualización de Modelos en Zenodo
 
 Los modelos entrenados con el genoma de referencia de *Solanum torvum* están depositados en Zenodo:
-- **DOI:** [10.5281/zenodo.23463987](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
+- **DOI:** [10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)
 - **Archivo:** `TargetCNV_Models.zip`
 
 ### 5.1 Descarga e Inferencia Automática en 1 Línea
@@ -365,7 +373,7 @@ Si deseas publicar en Zenodo una nueva versión de `TargetCNV_Models.zip` que in
    md5sum TargetCNV_Models.zip
    ```
 2. **Subir la nueva versión en Zenodo:**
-   - Ingresa a tu registro en Zenodo ([https://zenodo.org/records/23463987](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)) y haz clic en el botón **"New version"** (Nueva versión).
+   - Ingresa a tu registro en Zenodo ([https://zenodo.org/records/23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)) y haz clic en el botón **"New version"** (Nueva versión).
    - Elimina el archivo `TargetCNV_Models.zip` anterior dentro del borrador, sube el nuevo `TargetCNV_Models.zip`, actualiza el número de versión (por ejemplo, `v1.1.0`) y haz clic en **"Publish"**.
 3. **Actualizar `targetcnv.sh` con el nuevo enlace y hash MD5:**
    - Copia el nuevo `record_id` que Zenodo asigna a la versión recién publicada y el nuevo hash MD5 obtenido con `md5sum TargetCNV_Models.zip`, y actualízalos en las líneas 22–24 de `targetcnv.sh`:
@@ -395,6 +403,9 @@ Si deseas publicar en Zenodo una nueva versión de `TargetCNV_Models.zip` que in
 ```
 
 ### 6.2 Pruebas de Transferibilidad en Otras Especies (*S. citrullifolium* y *S. stellatiglandulosum*)
+
+- **Genomas a escala cromosómica (*S. torvum* y *S. citrullifolium*):** Los ensamblajes y anotaciones `.gff3` se encuentran reportados y publicados en el portal **Solanum Pan-Genomics** ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), en **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)) y en **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.google.com/search?q=https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Los datos de genes y ortogrupos (`OG_ID`) provienen de la publicación: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Genoma a escala de cóntigos (*S. stellatiglandulosum*):** El genoma fue reportado en **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) con **Accession: `PRJNA1070281` (ID: `1070281`)** por el **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Los datos de genes y grupos jerárquicos de homología (`HOG_ID`) provienen de: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://www.google.com/search?q=https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://www.google.com/search?q=https://doi.org/10.1007/s11103-026-01718-6).
 
 #### Caso A: Genoma ensamblado a nivel de cromosomas (*Solanum citrullifolium*)
 ```bash

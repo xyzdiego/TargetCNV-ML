@@ -1,0 +1,1689 @@
+---
+title: "TargetCNV-ML: Reporte de Transferencia Filogenética y Validación Inter-Especie"
+subtitle: "Benchmark Multimétrica, Resumen de Matrices de Confusión y Diagnóstico por Calidad de Genoma (Escala Cromosómica vs. Escala de Contigs)"
+author: "TargetCNV-ML Pipeline"
+date: today
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: true
+    code-fold: true
+    code-summary: "Mostrar / Ocultar Código R"
+    embed-resources: true
+    fig-width: 10
+    fig-height: 6
+    df-print: paged
+params:
+  project_root: "."
+  models_dir: "models"
+  donor_data: "data/data_prepared.rds"
+  cit_data: "data/citrullifolium/data_prepared.rds"
+  ste_data: "data/stellatiglandulosum/data_prepared.rds"
+  cit_gff_ref: ""
+  cit_captus_gff: ""
+  ste_captus_gff: ""
+  captus_stats: ""
+  dict_ref: ""
+  sources_file: ""
+  extra_species: ""
+  out_dir: "results"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{css}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+  margin-bottom: 20px;
+}
+.kpi-card {
+  background: #ffffff;
+  border: 1px solid #dce1e5;
+  border-left: 5px solid #2980b9;
+  border-radius: 8px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.kpi-card.green  { border-left-color: #27ae60; }
+.kpi-card.red    { border-left-color: #c0392b; }
+.kpi-card.purple { border-left-color: #8e44ad; }
+.kpi-card.orange { border-left-color: #d35400; }
+.kpi-card.teal   { border-left-color: #16a085; }
+.kpi-title {
+  font-size: 0.83rem;
+  color: #5d6d7e;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.kpi-value {
+  font-size: 1.50rem;
+  font-weight: 700;
+  color: #2c3e50;
+}
+.kpi-sub {
+  font-size: 0.82rem;
+  color: #7f8c8d;
+  margin-top: 2px;
+}
+.formula-box {
+  background-color: #f8f9fa;
+  border-left: 4px solid #2980b9;
+  padding: 14px 18px;
+  border-radius: 6px;
+  margin-top: 10px;
+  margin-bottom: 18px;
+}
+.asterisk-note {
+  background-color: #fef9e7;
+  border-left: 4px solid #f39c12;
+  padding: 11px 16px;
+  border-radius: 6px;
+  margin-top: 8px;
+  margin-bottom: 12px;
+  font-size: 0.93rem;
+}
+.genome-arch-box {
+  background-color: #f4f6f7;
+  border: 1px solid #d5dbdb;
+  border-left: 5px solid #16a085;
+  border-radius: 8px;
+  padding: 15px 18px;
+  margin-bottom: 18px;
+}
+.genome-arch-box.contig {
+  border-left-color: #d35400;
+}
+.summary-btn {
+  display: inline-block;
+  background-color: #2c3e50;
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 10px;
+}
+.summary-btn:hover {
+  background-color: #1a252f;
+}
+.model-badge {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 14px;
+  color: white;
+  font-weight: bold;
+  font-size: 0.92rem;
+  margin-bottom: 12px;
+}
+.scale-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.84rem;
+  color: #ffffff;
+  margin-right: 8px;
+}
+.scale-badge.chr {
+  background-color: #16a085;
+}
+.scale-badge.ctg {
+  background-color: #d35400;
+}
+```
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+  library(stringr)
+  library(ggplot2)
+  library(DT)
+  library(plotly)
+  library(cowplot)
+  library(caret)
+  library(pROC)
+  library(jsonlite)
+})
+
+proj_root  <- params$project_root
+models_dir <- params$models_dir
+out_dir    <- params$out_dir
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+if (file.exists(file.path(proj_root, "R", "model_specs.R"))) {
+  source(file.path(proj_root, "R", "model_specs.R"))
+}
+if (file.exists(file.path(proj_root, "R", "data_processing.R"))) {
+  source(file.path(proj_root, "R", "data_processing.R"))
+}
+if (file.exists(file.path(proj_root, "R", "model_evaluation.R"))) {
+  source(file.path(proj_root, "R", "model_evaluation.R"))
+}
+if (file.exists(file.path(proj_root, "R", "plotting.R"))) {
+  source(file.path(proj_root, "R", "plotting.R"))
+}
+
+if (!exists("normalize_model_names")) {
+  normalize_model_names <- function(mod_list) {
+    if (is.null(mod_list) || length(mod_list) == 0) return(mod_list)
+    if (is.character(mod_list)) {
+      mod_list[mod_list == "DNN_Profunda"]     <- "MLP"
+      mod_list[mod_list == "DNN_Regularizada"] <- "MLP_Regularizado"
+      mod_list[mod_list %in% c("DNN_Autoencoder", "Autoencoder", "SAE-DNN", "SAE_DNN")] <- "Stacked Autoencoder - DNN"
+      return(mod_list)
+    }
+    nms <- names(mod_list)
+    if (!is.null(nms)) {
+      nms[nms == "DNN_Profunda"]     <- "MLP"
+      nms[nms == "DNN_Regularizada"] <- "MLP_Regularizado"
+      nms[nms %in% c("DNN_Autoencoder", "Autoencoder", "SAE-DNN", "SAE_DNN")] <- "Stacked Autoencoder - DNN"
+      names(mod_list) <- nms
+      mod_list <- mod_list[!duplicated(names(mod_list))]
+    }
+    mod_list
+  }
+}
+
+# Indice Global con fuerte peso en FDR (mismo criterio que training_report.qmd)
+compute_global_fdr_score <- function(df_row) {
+  fdr_v  <- suppressWarnings(as.numeric(df_row$FDR[1]))
+  f1_v   <- suppressWarnings(as.numeric(df_row$F1_Score[1]))
+  mcc_v  <- suppressWarnings(as.numeric(df_row$MCC[1]))
+  bacc_v <- suppressWarnings(as.numeric(df_row$Exactitud_Balanceada[1]))
+  auc_v  <- suppressWarnings(as.numeric(df_row$ROC_AUC[1]))
+
+  if (length(fdr_v) == 0  || is.na(fdr_v))  fdr_v  <- 1.0
+  if (length(f1_v) == 0   || is.na(f1_v))   f1_v   <- 0.0
+  if (length(mcc_v) == 0  || is.na(mcc_v))  mcc_v  <- 0.0
+  if (length(bacc_v) == 0 || is.na(bacc_v)) bacc_v <- 0.0
+  if (length(auc_v) == 0  || is.na(auc_v))  auc_v  <- 0.0
+
+  0.45 * (1 - fdr_v) + 0.20 * f1_v + 0.15 * mcc_v + 0.10 * bacc_v + 0.10 * auc_v
+}
+
+fmt_fdr_pct <- function(val) {
+  if (length(val) == 0 || is.na(val)) "Sin pred. TP (NA)" else sprintf("%.2f%%", as.numeric(val) * 100)
+}
+
+# Formateador de tablas interactivas con asterisco (*) cuando la otra version de entrenamiento (Balanceado vs Desbalanceado) transfiere mejor
+format_benchmark_dt <- function(df,
+                                other_df = NULL,
+                                current_scen = "Balanceado",
+                                other_scen = "Desbalanceado",
+                                caption_text = NULL) {
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+
+  df_display <- df
+  base_models <- as.character(df_display$Modelo)
+  comp_notes  <- rep("Invariante (Regla fija)", nrow(df_display))
+  flagged_vec <- rep(FALSE, nrow(df_display))
+
+  has_other <- !is.null(other_df) && nrow(other_df) > 0 && "Modelo" %in% colnames(other_df)
+  other_models <- if (has_other) as.character(other_df$Modelo) else character(0)
+
+  if (has_other) {
+    for (i in seq_len(nrow(df_display))) {
+      m_name <- base_models[i]
+      if (!is.na(m_name) && !isTRUE(grepl("^Youden_", m_name)) && m_name != "Weighted_Heuristic" && m_name %in% other_models) {
+        row_curr  <- df[i, , drop = FALSE]
+        row_other <- other_df[which(other_models == m_name)[1], , drop = FALSE]
+
+        score_curr  <- compute_global_fdr_score(row_curr)
+        score_other <- compute_global_fdr_score(row_other)
+        fdr_curr    <- suppressWarnings(as.numeric(row_curr$FDR[1]))
+        fdr_other   <- suppressWarnings(as.numeric(row_other$FDR[1]))
+
+        curr_fdr_na  <- (length(fdr_curr) == 0 || is.na(fdr_curr))
+        other_fdr_na <- (length(fdr_other) == 0 || is.na(fdr_other))
+
+        other_is_better <- FALSE
+        curr_is_better  <- FALSE
+
+        if (curr_fdr_na && !other_fdr_na) {
+          other_is_better <- TRUE
+        } else if (!curr_fdr_na && other_fdr_na) {
+          curr_is_better <- TRUE
+        } else if (!curr_fdr_na && !other_fdr_na) {
+          other_is_better <- isTRUE(
+            (score_other > score_curr + 1e-4 && fdr_other <= fdr_curr + 0.005) ||
+            (fdr_other < fdr_curr - 1e-4 && score_other >= score_curr - 0.002)
+          )
+          curr_is_better <- !other_is_better && isTRUE(
+            score_curr > score_other + 1e-4 || fdr_curr < fdr_other - 1e-4
+          )
+        } else {
+          other_is_better <- isTRUE(score_other > score_curr + 1e-4)
+          curr_is_better  <- isTRUE(score_curr > score_other + 1e-4)
+        }
+
+        if (isTRUE(other_is_better)) {
+          df_display$Modelo[i] <- paste0(m_name, " *")
+          flagged_vec[i] <- TRUE
+          comp_notes[i] <- sprintf(
+            "* Mejor desde %s (FDR: %s vs %s | Índice: %.3f vs %.3f)",
+            other_scen, fmt_fdr_pct(fdr_other), fmt_fdr_pct(fdr_curr), score_other, score_curr
+          )
+        } else if (isTRUE(curr_is_better)) {
+          comp_notes[i] <- sprintf(
+            "Óptimo desde %s (FDR: %s vs %s | Índice: %.3f vs %.3f)",
+            current_scen, fmt_fdr_pct(fdr_curr), fmt_fdr_pct(fdr_other), score_curr, score_other
+          )
+        } else {
+          comp_notes[i] <- sprintf(
+            "Equivalente en ambos (FDR: %s)",
+            fmt_fdr_pct(fdr_curr)
+          )
+        }
+      }
+    }
+  }
+
+  df_display <- df_display %>%
+    dplyr::mutate(Mejor_Version_FDR = comp_notes, .after = "Modelo")
+
+  pct_cols <- intersect(
+    c("Exactitud", "Exactitud_Balanceada", "Sensibilidad", "Especificidad", "Precision", "VPN", "FDR"),
+    colnames(df_display)
+  )
+  dec_cols <- intersect(
+    c("F1_Score", "MCC", "Kappa", "ROC_AUC"),
+    colnames(df_display)
+  )
+
+  for (col in pct_cols) {
+    df_display[[col]] <- round(as.numeric(df_display[[col]]) * 100, 2)
+  }
+  for (col in dec_cols) {
+    df_display[[col]] <- round(as.numeric(df_display[[col]]), 3)
+  }
+
+  dt <- DT::datatable(
+    df_display,
+    rownames = FALSE,
+    caption = caption_text,
+    extensions = "Buttons",
+    options = list(
+      pageLength = 50,
+      lengthMenu = c(10, 25, 50, 100),
+      scrollX = TRUE,
+      dom = "Bfrtip",
+      buttons = list(
+        list(extend = "copy",  text = "Copiar Tabla",   exportOptions = list(modifier = list(page = "all"))),
+        list(extend = "csv",   text = "Exportar CSV",   exportOptions = list(modifier = list(page = "all"))),
+        list(extend = "excel", text = "Exportar Excel", exportOptions = list(modifier = list(page = "all")))
+      ),
+      language = list(
+        search = "Filtrar modelo:",
+        zeroRecords = "No se encontraron registros",
+        emptyTable = "Sin datos"
+      )
+    )
+  )
+
+  if (length(pct_cols) > 0) {
+    dt <- dt %>% DT::formatCurrency(columns = pct_cols, currency = "%", before = FALSE, digits = 2)
+  }
+  if (length(dec_cols) > 0) {
+    dt <- dt %>% DT::formatRound(columns = dec_cols, digits = 3)
+  }
+  if (any(flagged_vec)) {
+    flagged_names <- df_display$Modelo[flagged_vec]
+    dt <- dt %>% DT::formatStyle(
+      "Modelo",
+      color = DT::styleEqual(flagged_names, rep("#b9770e", length(flagged_names))),
+      backgroundColor = DT::styleEqual(flagged_names, rep("#fef9e7", length(flagged_names))),
+      fontWeight = DT::styleEqual(flagged_names, rep("bold", length(flagged_names)))
+    )
+  }
+  if ("F1_Score" %in% colnames(df_display)) {
+    dt <- dt %>% DT::formatStyle(
+      "F1_Score",
+      background = DT::styleColorBar(c(0, 1), "#a9cce3"),
+      backgroundSize = "95% 75%",
+      backgroundRepeat = "no-repeat",
+      backgroundPosition = "center",
+      fontWeight = "bold"
+    )
+  }
+  if ("ROC_AUC" %in% colnames(df_display)) {
+    dt <- dt %>% DT::formatStyle(
+      "ROC_AUC",
+      background = DT::styleColorBar(c(0, 1), "#a3e4d7"),
+      backgroundSize = "95% 75%",
+      backgroundRepeat = "no-repeat",
+      backgroundPosition = "center"
+    )
+  }
+  return(dt)
+}
+
+# Selecciona los 6 modelos clave (Top 2 Youden + Heuristico + Top 3 ML sin Ensamble_Stacking ni Consenso_7_Modelos)
+get_top6_summary_models <- function(bench_df) {
+  if (is.null(bench_df) || nrow(bench_df) == 0) return(character(0))
+
+  top2_youden <- bench_df %>%
+    dplyr::filter(grepl("^Youden_", Modelo)) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::slice_head(n = 2) %>%
+    dplyr::pull(Modelo)
+
+  heur_name <- intersect("Weighted_Heuristic", bench_df$Modelo)
+
+  top3_ml <- bench_df %>%
+    dplyr::filter(!grepl("^Youden_", Modelo) & !Modelo %in% c("Weighted_Heuristic", "Ensamble_Stacking", "Consenso_7_Modelos")) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::slice_head(n = 3) %>%
+    dplyr::pull(Modelo)
+
+  selected_6 <- unique(c(top2_youden, heur_name, top3_ml))
+
+  if (length(selected_6) < 6) {
+    extra_models <- bench_df %>%
+      dplyr::filter(!Modelo %in% c(selected_6, "Ensamble_Stacking", "Consenso_7_Modelos")) %>%
+      dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+      dplyr::pull(Modelo)
+    selected_6 <- unique(c(selected_6, extra_models))[seq_len(min(6L, length(unique(c(selected_6, extra_models)))))]
+  }
+
+  bench_df %>%
+    dplyr::filter(Modelo %in% selected_6) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::pull(Modelo)
+}
+
+# Selecciona los 9 modelos estandarizados de transferencia de Workflow_Central_Sin_Rescate.R (lineas 1750-1881)
+get_thesis_9_models <- function(bench_df) {
+  if (is.null(bench_df) || nrow(bench_df) == 0) return(character(0))
+  canonical_9 <- c(
+    "Youden_pct_recovered",
+    "Youden_pct_identity",
+    "Weighted_Heuristic",
+    "ElasticNet",
+    "NaiveBayes",
+    "SVM_Polinomial",
+    "MLP",
+    "LDA",
+    "Ensamble_Stacking"
+  )
+  present_9 <- intersect(canonical_9, bench_df$Modelo)
+  bench_df %>%
+    dplyr::filter(Modelo %in% present_9) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
+    dplyr::pull(Modelo)
+}
+
+# Grafico interactivo Plotly ordenado de mayor a menor ROC-AUC
+build_interactive_benchmark_plotly <- function(df_bench,
+                                               species_title = "S. citrullifolium",
+                                               view_label = "6 Modelos Clave") {
+  if (is.null(df_bench) || nrow(df_bench) == 0) return(NULL)
+
+  metrics_info <- list(
+    list(col = "ROC_AUC",              label = "ROC-AUC",              color = "#27ae60"),
+    list(col = "F1_Score",             label = "F1-Score",             color = "#2980b9"),
+    list(col = "Exactitud_Balanceada", label = "Exactitud Balanceada", color = "#8e44ad"),
+    list(col = "Exactitud",            label = "Exactitud (Accuracy)", color = "#16a085"),
+    list(col = "Sensibilidad",         label = "Sensibilidad (TPR)",   color = "#d35400"),
+    list(col = "Especificidad",        label = "Especificidad (TNR)",  color = "#2c3e50"),
+    list(col = "Precision",            label = "Precisión (PPV)",      color = "#f39c12"),
+    list(col = "FDR",                  label = "FDR (Falsos Pos.)",    color = "#c0392b"),
+    list(col = "MCC",                  label = "MCC (Matthews)",       color = "#7f8c8d")
+  )
+
+  avail_info <- Filter(function(m) m$col %in% colnames(df_bench), metrics_info)
+  if (length(avail_info) == 0) return(NULL)
+
+  df_best_to_worst <- df_bench %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+
+  y_levels_bottom_to_top <- rev(unique(as.character(df_best_to_worst$Modelo)))
+  df_sorted <- df_best_to_worst %>%
+    dplyr::mutate(Modelo = factor(as.character(Modelo), levels = y_levels_bottom_to_top))
+
+  n_models <- nrow(df_sorted)
+  dynamic_height <- if (n_models <= 6) 560 else if (n_models <= 10) 720 else max(950, n_models * 82)
+
+  fig <- plotly::plot_ly(height = dynamic_height)
+  n_m <- length(avail_info)
+
+  for (m in avail_info) {
+    vals <- round(as.numeric(df_sorted[[m$col]]), 3)
+    fig <- fig %>%
+      plotly::add_trace(
+        y = df_sorted$Modelo,
+        x = vals,
+        name = m$label,
+        type = "bar",
+        orientation = "h",
+        marker = list(color = m$color),
+        text = sprintf("%.3f", vals),
+        textposition = "auto",
+        hovertemplate = paste0("<b>%{y}</b><br>", m$label, ": %{x:.3f}<extra></extra>")
+      )
+  }
+
+  buttons_list <- list(
+    list(
+      method = "restyle",
+      args = list("visible", as.list(rep(TRUE, n_m))),
+      label = "Vista General (Todas las Métricas)"
+    ),
+    list(
+      method = "restyle",
+      args = list("visible", as.list(sapply(avail_info, function(x) x$col %in% c("F1_Score", "ROC_AUC", "Exactitud", "Precision", "Sensibilidad", "Especificidad", "FDR")))),
+      label = "7 Métricas Clásicas"
+    )
+  )
+
+  for (i in seq_len(n_m)) {
+    vis_vec <- rep(FALSE, n_m)
+    vis_vec[i] <- TRUE
+    buttons_list[[length(buttons_list) + 1]] <- list(
+      method = "restyle",
+      args = list("visible", as.list(vis_vec)),
+      label = paste("Solo:", avail_info[[i]]$label)
+    )
+  }
+
+  fig <- fig %>%
+    plotly::layout(
+      title = list(
+        text = paste0(
+          "<b>Benchmark de Transferencia (", view_label, " — Ordenado por ROC-AUC) — ", species_title, "</b><br>",
+          "<sup>Usa el botón desplegable para elegir métricas o haz clic en la leyenda inferior para activar/desactivar varias métricas</sup>"
+        ),
+        x = 0.5
+      ),
+      barmode = "group",
+      bargap = 0.24,
+      bargroupgap = 0.08,
+      xaxis = list(title = "Puntaje (0 a 1)", range = c(0, 1.08), tickfont = list(size = 12)),
+      yaxis = list(
+        title = "",
+        tickfont = list(size = 12),
+        categoryorder = "array",
+        categoryarray = y_levels_bottom_to_top
+      ),
+      legend = list(orientation = "h", y = -0.08, x = 0.5, xanchor = "center", font = list(size = 11)),
+      margin = list(l = 195, r = 35, t = 95, b = 105),
+      updatemenus = list(
+        list(
+          type = "dropdown",
+          active = 0,
+          x = 0.0,
+          y = 1.08,
+          xanchor = "left",
+          yanchor = "top",
+          buttons = buttons_list
+        )
+      )
+    )
+
+  return(fig)
+}
+
+# 1. Cargar modelos entrenados en S. torvum (y asegurar los 18 clasificadores ML + Ensamble_Stacking)
+donor_df <- if (!is.null(params$donor_data) && file.exists(params$donor_data)) {
+  if (grepl("\\.rds$", params$donor_data, ignore.case = TRUE)) readRDS(params$donor_data) else utils::read.delim(params$donor_data)
+} else {
+  NULL
+}
+
+df_ml_donor <- if (!is.null(donor_df) && "Validacion_Espacial" %in% colnames(donor_df)) {
+  pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(donor_df))
+  donor_df %>%
+    dplyr::filter(!is.na(Validacion_Espacial)) %>%
+    dplyr::mutate(
+      Clase = factor(ifelse(Validacion_Espacial %in% c("TRUE_POSITIVE", "TP"), "TP", "FP"), levels = c("TP", "FP")),
+      dplyr::across(dplyr::all_of(pred_cols), ~ as.numeric(as.character(.x)))
+    ) %>%
+    dplyr::filter(stats::complete.cases(dplyr::select(., dplyr::all_of(pred_cols)))) %>%
+    as.data.frame()
+} else {
+  NULL
+}
+
+models_bal <- if (file.exists(file.path(models_dir, "models_balanced.rds"))) {
+  readRDS(file.path(models_dir, "models_balanced.rds"))
+} else if (file.exists(file.path(models_dir, "all_trained_models.rds"))) {
+  readRDS(file.path(models_dir, "all_trained_models.rds"))
+} else {
+  list()
+}
+
+models_unbal <- if (file.exists(file.path(models_dir, "models_unbalanced.rds"))) {
+  readRDS(file.path(models_dir, "models_unbalanced.rds"))
+} else {
+  list()
+}
+
+ensure_complete_tournament_models <- function(existing_list, df_train, sampling_mode = "down", target_rds_path = NULL) {
+  existing_list <- normalize_model_names(existing_list)
+  if (is.null(df_train) || nrow(df_train) < 10 || !exists("get_model_specs")) return(existing_list)
+
+  specs <- get_model_specs(n_obs = nrow(df_train), extended = TRUE)
+  missing_names <- setdiff(names(specs), names(existing_list))
+
+  if (length(missing_names) == 0 && "Ensamble_Stacking" %in% names(existing_list)) {
+    return(existing_list)
+  }
+
+  pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(df_train))
+  x_tr <- df_train[, pred_cols, drop = FALSE]
+  y_tr <- df_train$Clase
+
+  ctrl <- caret::trainControl(
+    method = "cv",
+    number = 5,
+    classProbs = TRUE,
+    summaryFunction = caret::twoClassSummary,
+    savePredictions = "final",
+    sampling = sampling_mode
+  )
+
+  for (m_name in missing_names) {
+    cfg <- specs[[m_name]]
+    set.seed(1234)
+    args_list <- list(
+      x = x_tr,
+      y = y_tr,
+      method = cfg$method,
+      metric = "ROC",
+      trControl = ctrl
+    )
+    if (!isTRUE(cfg$no_scale))   args_list$preProcess <- c("center", "scale")
+    if (!is.null(cfg$tuneLength)) args_list$tuneLength <- cfg$tuneLength
+    if (!is.null(cfg$tuneGrid))   args_list$tuneGrid   <- cfg$tuneGrid
+    if (!is.null(cfg$trace))      args_list$trace      <- cfg$trace
+    if (!is.null(cfg$MaxNWts))    args_list$MaxNWts    <- cfg$MaxNWts
+    if (!is.null(cfg$verbose))    args_list$verbose    <- cfg$verbose
+    if (!is.null(cfg$nthread))    args_list$nthread    <- cfg$nthread
+
+    fit_m <- tryCatch(
+      suppressWarnings(capture.output(res_m <- do.call(caret::train, args_list))),
+      error = function(e) NULL
+    )
+    if (exists("res_m") && !is.null(res_m)) {
+      existing_list[[m_name]] <- res_m
+      rm(res_m)
+    }
+  }
+
+  if (!"Ensamble_Stacking" %in% names(existing_list) && requireNamespace("caretEnsemble", quietly = TRUE)) {
+    stack_fit <- tryCatch({
+      aucs <- sapply(existing_list, function(m) {
+        if (!inherits(m, "train") || is.null(m$pred) || !"TP" %in% colnames(m$pred)) return(NA_real_)
+        as.numeric(pROC::auc(pROC::roc(response = m$pred$obs, predictor = m$pred$TP, levels = c("FP", "TP"), direction = "<", quiet = TRUE)))
+      })
+      valid_m <- names(sort(aucs[!is.na(aucs)], decreasing = TRUE))
+      if (length(valid_m) >= 2) {
+        top2_mods <- existing_list[valid_m[1:2]]
+        class(top2_mods) <- c("caretList", "list")
+        set.seed(1234)
+        caretEnsemble::caretStack(
+          top2_mods,
+          method = "glm",
+          metric = "ROC",
+          trControl = caret::trainControl(method = "cv", number = 5, savePredictions = "final", classProbs = TRUE, summaryFunction = caret::twoClassSummary)
+        )
+      } else {
+        NULL
+      }
+    }, error = function(e) NULL)
+
+    if (!is.null(stack_fit)) {
+      existing_list[["Ensamble_Stacking"]] <- stack_fit
+    }
+  }
+
+  ordered_keys <- intersect(c(names(specs), "Ensamble_Stacking"), names(existing_list))
+  existing_list <- existing_list[ordered_keys]
+
+  if (!is.null(target_rds_path) && dir.exists(dirname(target_rds_path))) {
+    tryCatch(saveRDS(existing_list, target_rds_path), error = function(e) {})
+  }
+  return(existing_list)
+}
+
+models_bal   <- ensure_complete_tournament_models(models_bal,   df_ml_donor, sampling_mode = "down", target_rds_path = file.path(models_dir, "models_balanced.rds"))
+models_unbal <- ensure_complete_tournament_models(models_unbal, df_ml_donor, sampling_mode = NULL,   target_rds_path = file.path(models_dir, "models_unbalanced.rds"))
+
+youden_thresholds <- if (file.exists(file.path(models_dir, "youden_thresholds.rds"))) {
+  readRDS(file.path(models_dir, "youden_thresholds.rds"))
+} else {
+  NULL
+}
+
+heuristic_model <- if (file.exists(file.path(models_dir, "heuristic_model.rds"))) {
+  readRDS(file.path(models_dir, "heuristic_model.rds"))
+} else {
+  NULL
+}
+
+# 2. Localizar o preparar los datasets de validacion inter-especie (S. citrullifolium y S. stellatiglandulosum)
+find_first_existing <- function(candidates) {
+  candidates <- candidates[!is.na(candidates) & nzchar(candidates)]
+  for (cand in candidates) {
+    exp_cand <- path.expand(cand)
+    if (file.exists(exp_cand)) return(normalizePath(exp_cand, mustWork = FALSE))
+  }
+  NULL
+}
+
+ref_base_candidates <- c(
+  file.path(proj_root, "data", "reference"),
+  path.expand("~/Documentos/Formacion/Maestria/Tesis/Archivos_Referencia")
+)
+
+dict_file_resolved <- find_first_existing(c(
+  params$dict_ref,
+  file.path(ref_base_candidates, "Genes_Capture_May_2026.xlsx")
+))
+
+stats_file_resolved <- find_first_existing(c(
+  params$captus_stats,
+  file.path(proj_root, "data", "reference", "captus-extract_stats.tsv"),
+  file.path(proj_root, "data", "CAPTUS_Muestras", "captus-extract_stats.tsv"),
+  path.expand("~/Documentos/Formacion/Maestria/Tesis/Archivos_Referencia/Captus_Local/03_extract_metabolismo/captus-extract_stats.tsv")
+))
+
+load_or_prepare_species <- function(rds_param,
+                                    sample_id,
+                                    genome_scale = c("chromosome", "contig"),
+                                    gff_ref_candidates = character(0),
+                                    captus_gff_candidates = character(0),
+                                    default_save_rds = NULL) {
+  genome_scale <- match.arg(genome_scale)
+  existing_data <- find_first_existing(c(rds_param, sub("\\.rds$", ".tsv", rds_param)))
+  if (!is.null(existing_data)) {
+    df_sp <- if (grepl("\\.rds$", existing_data, ignore.case = TRUE)) {
+      readRDS(existing_data)
+    } else {
+      utils::read.delim(existing_data, stringsAsFactors = FALSE)
+    }
+    if (is.null(attr(df_sp, "genome_scale"))) attr(df_sp, "genome_scale") <- genome_scale
+    if (is.null(attr(df_sp, "target_mode")))  attr(df_sp, "target_mode")  <- if (genome_scale == "chromosome") "overlap" else "target_attr"
+    attr(df_sp, "origin_file") <- basename(existing_data)
+    return(df_sp)
+  }
+
+  captus_gff_path <- find_first_existing(captus_gff_candidates)
+  gff_ref_path    <- if (genome_scale == "chromosome") find_first_existing(gff_ref_candidates) else NULL
+
+  if (!is.null(captus_gff_path) && !is.null(stats_file_resolved) && !is.null(dict_file_resolved) &&
+      (genome_scale == "contig" || !is.null(gff_ref_path))) {
+    df_sp <- tryCatch({
+      prepare_transfer_species_data(
+        sample_name  = sample_id,
+        genome_scale = genome_scale,
+        captus_gff   = captus_gff_path,
+        captus_stats = stats_file_resolved,
+        dict_ref     = dict_file_resolved,
+        gff_ref      = gff_ref_path,
+        save_rds     = default_save_rds
+      )
+    }, error = function(e) NULL)
+    if (!is.null(df_sp)) {
+      orig_parts <- basename(na.omit(c(gff_ref_path, captus_gff_path, stats_file_resolved, dict_file_resolved)))
+      attr(df_sp, "origin_file") <- paste(orig_parts, collapse = ", ")
+    }
+    return(df_sp)
+  }
+  NULL
+}
+
+# Especie 1: Solanum citrullifolium (Genoma de referencia a escala cromosomica)
+df_cit <- load_or_prepare_species(
+  rds_param    = file.path(proj_root, params$cit_data),
+  sample_id    = "Scitrullifolium",
+  genome_scale = "chromosome",
+  gff_ref_candidates = c(
+    params$cit_gff_ref,
+    file.path(proj_root, "data", "reference", "Scitrullifolium_genes.gff3"),
+    file.path(proj_root, "data", "citrullifolium", "Scitrullifolium_genes.gff3"),
+    path.expand("~/Documentos/Formacion/Maestria/Tesis/Archivos_Referencia/Solanum_citrullifolium_genome/Solanum_citrullifolium_genome/Scitrullifolium_genes.gff3")
+  ),
+  captus_gff_candidates = c(
+    params$cit_captus_gff,
+    file.path(proj_root, "data", "reference", "Scitrullifolium_hit_contigs.gff"),
+    file.path(proj_root, "data", "citrullifolium", "Scitrullifolium_hit_contigs.gff"),
+    path.expand("~/Documentos/Formacion/Maestria/Tesis/Archivos_Referencia/Captus_Local/03_extract_citr_metabolism_complete/Scitrullifolium__captus-ext/06_assembly_annotated/Scitrullifolium_hit_contigs.gff")
+  ),
+  default_save_rds = file.path(proj_root, "data", "citrullifolium", "data_prepared.rds")
+)
+
+# Especie 2: Solanum stellatiglandulosum (Genoma fragmentado a escala de contigs)
+df_ste <- load_or_prepare_species(
+  rds_param    = file.path(proj_root, params$ste_data),
+  sample_id    = "S_stella",
+  genome_scale = "contig",
+  captus_gff_candidates = c(
+    params$ste_captus_gff,
+    file.path(proj_root, "data", "reference", "S_stella_hit_contigs.gff"),
+    file.path(proj_root, "data", "stellatiglandulosum", "S_stella_hit_contigs.gff"),
+    path.expand("~/Documentos/Formacion/Maestria/Tesis/Archivos_Referencia/Captus_Local/03_extract_stella_metabolism_complete/S_stella__captus-ext/06_assembly_annotated/S_stella_hit_contigs.gff")
+  ),
+  default_save_rds = file.path(proj_root, "data", "stellatiglandulosum", "data_prepared.rds")
+)
+
+# Lector opcional de archivo externo de fuentes y citas bibliograficas (params$sources_file)
+load_sources_citations <- function(sources_param, proj_root = ".") {
+  if (is.null(sources_param) || !nzchar(trimws(sources_param))) return(NULL)
+  cand <- c(
+    sources_param,
+    file.path(proj_root, sources_param),
+    file.path(proj_root, "data", "reference", "sources_citations.tsv"),
+    file.path(proj_root, "sources_citations.tsv")
+  )
+  found <- cand[file.exists(cand)][1]
+  if (is.na(found) || !nzchar(found)) return(NULL)
+  tryCatch(
+    utils::read.delim(found, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE),
+    error = function(e) NULL
+  )
+}
+
+lookup_source_entry <- function(sources_df, sample_id = NULL, genome_scale = NULL) {
+  if (is.null(sources_df) || nrow(sources_df) == 0 || !"sample_id" %in% colnames(sources_df)) return(NULL)
+  if (!is.null(sample_id) && nzchar(sample_id)) {
+    hit <- sources_df[tolower(trimws(sources_df$sample_id)) == tolower(trimws(sample_id)), , drop = FALSE]
+    if (nrow(hit) > 0) return(hit[1, , drop = FALSE])
+  }
+  if (!is.null(genome_scale) && nzchar(genome_scale)) {
+    def_key <- if (tolower(genome_scale) == "contig") "contig_default" else "chromosome_default"
+    hit <- sources_df[tolower(trimws(sources_df$sample_id)) == def_key, , drop = FALSE]
+    if (nrow(hit) > 0) return(hit[1, , drop = FALSE])
+  }
+  NULL
+}
+
+sources_df <- load_sources_citations(params$sources_file, proj_root)
+
+# Construir registro multiespecie dinamico (nomenclatura uniforme: homologos validos y categorias TP y FP)
+species_registry <- list()
+
+if (!is.null(df_cit) && nrow(df_cit) > 0) {
+  src_cit <- lookup_source_entry(sources_df, sample_id = "Scitrullifolium", genome_scale = "chromosome")
+  orig_cit <- attr(df_cit, "origin_file")
+  if (is.null(orig_cit) || !nzchar(orig_cit)) orig_cit <- basename(params$cit_data)
+  species_registry[["Scitrullifolium"]] <- list(
+    id            = "Scitrullifolium",
+    sci_name      = "Solanum citrullifolium",
+    short_name    = "S. citrullifolium",
+    genome_scale  = "chromosome",
+    scale_label   = "Escala Cromosómica (--genome_scale chromosome / overlap)",
+    origin_file   = orig_cit,
+    has_citation  = !is.null(src_cit),
+    genome_source = if (!is.null(src_cit)) as.character(src_cit$genome_source[1]) else NULL,
+    db_info       = if (!is.null(src_cit)) as.character(src_cit$homology_source[1]) else NULL,
+    algo_info     = "Armonización de prefijos seqlevels + Intersección espacial estricta GenomicRanges::findOverlaps(ignore.strand = FALSE) contra la anotación GFF3 cromosómica de referencia para etiquetado binario TP vs. FP",
+    data          = df_cit
+  )
+}
+
+if (!is.null(df_ste) && nrow(df_ste) > 0) {
+  src_ste <- lookup_source_entry(sources_df, sample_id = "S_stella", genome_scale = "contig")
+  orig_ste <- attr(df_ste, "origin_file")
+  if (is.null(orig_ste) || !nzchar(orig_ste)) orig_ste <- basename(params$ste_data)
+  species_registry[["S_stella"]] <- list(
+    id            = "S_stella",
+    sci_name      = "Solanum stellatiglandulosum",
+    short_name    = "S. stellatiglandulosum",
+    genome_scale  = "contig",
+    scale_label   = "Escala de Contigs (--genome_scale contig / target_attr + Puente HOG↔OG)",
+    origin_file   = orig_ste,
+    has_citation  = !is.null(src_ste),
+    genome_source = if (!is.null(src_ste)) as.character(src_ste$genome_source[1]) else NULL,
+    db_info       = if (!is.null(src_ste)) as.character(src_ste$homology_source[1]) else NULL,
+    algo_info     = "Extracción directa de &lt;transcript_id&gt;-&lt;OG_ID&gt; desde el atributo Target del GFF de CAPTUS + Colapso de exones + Cruce OG_Captus -&gt; HOG_ID == OG_Ste para etiquetado binario TP vs. FP",
+    data          = df_ste
+  )
+}
+
+# Permitir especies adicionales pasadas en params$extra_species ("Nombre:chromosome:ruta.rds;Nombre2:contig:ruta2.rds")
+if (!is.null(params$extra_species) && nzchar(trimws(params$extra_species))) {
+  extra_items <- strsplit(params$extra_species, ";")[[1]]
+  for (item in extra_items) {
+    parts <- trimws(strsplit(item, ":")[[1]])
+    if (length(parts) >= 3) {
+      sp_id <- parts[1]
+      sp_sc <- if (tolower(parts[2]) %in% c("contig", "contigs", "fragmentado")) "contig" else "chromosome"
+      sp_fp <- find_first_existing(c(parts[3], file.path(proj_root, parts[3])))
+      if (!is.null(sp_fp)) {
+        df_ex <- if (grepl("\\.rds$", sp_fp, ignore.case = TRUE)) readRDS(sp_fp) else utils::read.delim(sp_fp, stringsAsFactors = FALSE)
+        src_ex <- lookup_source_entry(sources_df, sample_id = sp_id, genome_scale = NULL)
+        species_registry[[sp_id]] <- list(
+          id            = sp_id,
+          sci_name      = sp_id,
+          short_name    = sp_id,
+          genome_scale  = sp_sc,
+          scale_label   = if (sp_sc == "chromosome") "Escala Cromosómica (overlap)" else "Escala de Contigs (target_attr + Puente HOG↔OG)",
+          origin_file   = basename(sp_fp),
+          has_citation  = !is.null(src_ex),
+          genome_source = if (!is.null(src_ex)) as.character(src_ex$genome_source[1]) else NULL,
+          db_info       = if (!is.null(src_ex)) as.character(src_ex$homology_source[1]) else NULL,
+          algo_info     = if (sp_sc == "chromosome") "Intersección de coordenadas GenomicRanges contra GFF3 de genes (TP vs. FP)" else "Extracción desde atributo Target del GFF de CAPTUS (TP vs. FP)",
+          data          = df_ex
+        )
+      }
+    }
+  }
+}
+
+# 3. Funcion que evalua TODOS los modelos entrenados en S. torvum (Balanceados y Desbalanceados) sobre una especie receptora
+evaluate_transfer_on_species <- function(df_sp, models_list, scenario_key = "balanced") {
+  pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(df_sp))
+  df_clean <- df_sp %>%
+    dplyr::filter(!is.na(Validacion_Espacial)) %>%
+    dplyr::mutate(
+      Clase_Real = factor(ifelse(Validacion_Espacial %in% c("TRUE_POSITIVE", "TP"), "TP", "FP"), levels = c("TP", "FP")),
+      dplyr::across(dplyr::all_of(pred_cols), ~ as.numeric(as.character(.x)))
+    ) %>%
+    dplyr::filter(stats::complete.cases(dplyr::select(., dplyr::all_of(pred_cols)))) %>%
+    as.data.frame()
+
+  x_new <- df_clean[, pred_cols, drop = FALSE]
+  y_obs <- df_clean$Clase_Real
+
+  rows   <- list()
+  cms    <- list()
+  scores <- list()
+  preds  <- list()
+
+  # A. Cortes Univariados de Youden aprendidos en S. torvum
+  if (!is.null(youden_thresholds)) {
+    for (y_var in names(youden_thresholds)) {
+      if (y_var %in% colnames(x_new)) {
+        m_label <- paste0("Youden_", y_var)
+        thr_val <- as.numeric(youden_thresholds[[y_var]])
+        pred_y  <- factor(ifelse(x_new[[y_var]] >= thr_val, "TP", "FP"), levels = c("TP", "FP"))
+        rows[[m_label]] <- compute_classification_metrics(
+          pred = pred_y, obs = y_obs, score = x_new[[y_var]], positive_class = "TP", model_name = m_label
+        )
+        cms[[m_label]]    <- table(Prediccion = pred_y, Referencia = y_obs)
+        scores[[m_label]] <- as.numeric(x_new[[y_var]])
+        preds[[m_label]]  <- pred_y
+      }
+    }
+  }
+
+  # B. Modelo Heuristico Ponderado aprendido en S. torvum
+  if (!is.null(heuristic_model) && !is.null(youden_thresholds)) {
+    m_names  <- names(heuristic_model$weights)
+    v_mat    <- sapply(m_names, function(m) as.numeric(x_new[[m]] >= youden_thresholds[[m]]))
+    scores_h <- as.vector(v_mat %*% heuristic_model$weights)
+    pred_h   <- factor(ifelse(scores_h >= heuristic_model$global_threshold, "TP", "FP"), levels = c("TP", "FP"))
+    rows[["Weighted_Heuristic"]] <- compute_classification_metrics(
+      pred = pred_h, obs = y_obs, score = scores_h, positive_class = "TP", model_name = "Weighted_Heuristic"
+    )
+    cms[["Weighted_Heuristic"]]    <- table(Prediccion = pred_h, Referencia = y_obs)
+    scores[["Weighted_Heuristic"]] <- scores_h
+    preds[["Weighted_Heuristic"]]  <- pred_h
+  }
+
+  # C. Todos los modelos supervisados de Machine Learning + Ensamble_Stacking entrenados en S. torvum
+  if (!is.null(models_list) && length(models_list) > 0) {
+    for (m_name in names(models_list)) {
+      mod_obj <- models_list[[m_name]]
+      if (inherits(mod_obj, "caretStack")) {
+        tryCatch({
+          base_mods <- mod_obj$models
+          prob_base <- as.data.frame(lapply(base_mods, function(bm) stats::predict(bm, newdata = x_new, type = "prob")[["TP"]]))
+          colnames(prob_base) <- names(base_mods)
+          probs_s <- stats::predict(mod_obj$ens_model, newdata = prob_base, type = "prob")[["TP"]]
+          preds_s <- factor(ifelse(probs_s > 0.5, "TP", "FP"), levels = c("TP", "FP"))
+          rows[[m_name]] <- compute_classification_metrics(
+            pred = preds_s, obs = y_obs, score = probs_s, positive_class = "TP", model_name = m_name
+          )
+          cms[[m_name]]    <- table(Prediccion = preds_s, Referencia = y_obs)
+          scores[[m_name]] <- probs_s
+          preds[[m_name]]  <- preds_s
+        }, error = function(e) {})
+      } else {
+        tryCatch({
+          pred_c <- stats::predict(mod_obj, newdata = x_new)
+          pred_c <- factor(ifelse(as.character(pred_c) %in% c("TP", "TRUE_POSITIVE"), "TP", "FP"), levels = c("TP", "FP"))
+          prob_c <- tryCatch(stats::predict(mod_obj, newdata = x_new, type = "prob")[["TP"]], error = function(e) NULL)
+          rows[[m_name]] <- compute_classification_metrics(
+            pred = pred_c, obs = y_obs, score = prob_c, positive_class = "TP", model_name = m_name
+          )
+          cms[[m_name]]    <- table(Prediccion = pred_c, Referencia = y_obs)
+          scores[[m_name]] <- prob_c
+          preds[[m_name]]  <- pred_c
+        }, error = function(e) {})
+      }
+    }
+  }
+
+  # D. Consenso de 7 Modelos (4 ML + 2 Youden + 1 Heuristico, umbral >= 4/7)
+  voter_candidates <- c("ElasticNet", "NaiveBayes", "SVM_Polinomial", "Red_Neuronal",
+                        "Youden_pct_recovered", "Youden_pct_identity", "Weighted_Heuristic")
+  avail_voters <- intersect(voter_candidates, names(preds))
+  if (length(avail_voters) >= 5) {
+    votes_mat <- sapply(avail_voters, function(vn) as.integer(preds[[vn]] == "TP"))
+    votes_sum <- rowSums(votes_mat, na.rm = TRUE)
+    pred_cons <- factor(ifelse(votes_sum >= 4, "TP", "FP"), levels = c("TP", "FP"))
+    rows[["Consenso_7_Modelos"]] <- compute_classification_metrics(
+      pred = pred_cons, obs = y_obs, score = votes_sum / length(avail_voters), positive_class = "TP", model_name = "Consenso_7_Modelos"
+    )
+    cms[["Consenso_7_Modelos"]]    <- table(Prediccion = pred_cons, Referencia = y_obs)
+    scores[["Consenso_7_Modelos"]] <- votes_sum
+    preds[["Consenso_7_Modelos"]]  <- pred_cons
+  }
+
+  df_bench <- dplyr::bind_rows(rows) %>%
+    dplyr::filter(!is.na(Modelo) & nzchar(as.character(Modelo))) %>%
+    dplyr::distinct(Modelo, .keep_all = TRUE) %>%
+    dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+
+  cms <- cms[intersect(df_bench$Modelo, names(cms))]
+
+  list(
+    df_clean  = df_clean,
+    benchmark = df_bench,
+    cms       = cms,
+    scores    = scores,
+    preds     = preds
+  )
+}
+
+# Evaluar todas las especies registradas en ambos escenarios de entrenamiento (Balanceado y Desbalanceados)
+transfer_results <- list()
+all_species_bench_list <- list()
+
+for (sp_key in names(species_registry)) {
+  sp_info    <- species_registry[[sp_key]]
+  eval_bal   <- evaluate_transfer_on_species(sp_info$data, models_bal,   "balanced")
+  eval_unbal <- evaluate_transfer_on_species(sp_info$data, models_unbal, "unbalanced")
+
+  transfer_results[[sp_key]] <- list(
+    info  = sp_info,
+    bal   = eval_bal,
+    unbal = eval_unbal
+  )
+
+  out_sp_tsv <- file.path(out_dir, sprintf("transferability_%s.tsv", tolower(sp_key)))
+  tryCatch(
+    utils::write.table(eval_bal$benchmark, file = out_sp_tsv, sep = "\t", row.names = FALSE, quote = FALSE),
+    error = function(e) {}
+  )
+
+  all_species_bench_list[[sp_key]] <- eval_bal$benchmark %>%
+    dplyr::mutate(
+      Especie = sp_info$short_name,
+      Escala_Genoma = if (sp_info$genome_scale == "chromosome") "Escala Cromosómica" else "Escala de Contigs",
+      .before = 1
+    )
+}
+
+# Cargar benchmark del donante S. torvum para comparativa multiespecie
+bench_donor_path <- file.path(models_dir, "benchmark_models_balanced.rds")
+bench_donor <- if (file.exists(bench_donor_path)) readRDS(bench_donor_path) else NULL
+
+if (!is.null(bench_donor) && nrow(bench_donor) > 0) {
+  all_species_bench_list[["Storvum_Donor"]] <- bench_donor %>%
+    dplyr::mutate(
+      Especie = "S. torvum (Donante CV)",
+      Escala_Genoma = "Escala Cromosómica (Entrenamiento)",
+      .before = 1
+    )
+}
+
+df_multiespecie_all <- dplyr::bind_rows(all_species_bench_list)
+if (nrow(df_multiespecie_all) > 0) {
+  tryCatch(
+    utils::write.table(df_multiespecie_all, file = file.path(out_dir, "transferability_all_species.tsv"), sep = "\t", row.names = FALSE, quote = FALSE),
+    error = function(e) {}
+  )
+}
+
+# Funciones de renderizado de grillas de matrices de confusion para cada especie
+render_species_cms_grid <- function(sp_key, mode = c("top6", "thesis9", "top3_f1")) {
+  mode <- match.arg(mode)
+  res_sp   <- transfer_results[[sp_key]]
+  bench_df <- res_sp$bal$benchmark
+  all_cms  <- res_sp$bal$cms
+  sp_name  <- res_sp$info$short_name
+  sc_label <- if (res_sp$info$genome_scale == "chromosome") "Escala Cromosómica" else "Escala de Contigs"
+
+  if (is.null(bench_df) || length(all_cms) == 0) {
+    cat("> *No hay matrices de confusión disponibles para esta especie.*\n")
+    return(invisible(NULL))
+  }
+
+  if (mode == "top6") {
+    selected_mods <- intersect(get_top6_summary_models(bench_df), names(all_cms))
+    n_cols <- 2
+    banner_txt <- sprintf("Resumen de Matrices Clave en %s (%s): Top 2 Youden + Heurístico + Top 3 ML", sp_name, sc_label)
+  } else if (mode == "thesis9") {
+    canonical_9 <- c("Youden_pct_recovered", "Youden_pct_identity", "Weighted_Heuristic",
+                     "ElasticNet", "NaiveBayes", "SVM_Polinomial", "MLP", "LDA", "Ensamble_Stacking")
+    selected_mods <- intersect(canonical_9, names(all_cms))
+    n_cols <- 3
+    banner_txt <- sprintf("Transferencia en %s (%s): 9 Modelos Estandarizados (Cortes Empíricos vs. ML vs. Stacking)", sp_name, sc_label)
+  } else {
+    ml_only <- bench_df %>%
+      dplyr::filter(!grepl("^Youden_", Modelo) & !Modelo %in% c("Weighted_Heuristic", "Ensamble_Stacking", "Consenso_7_Modelos")) %>%
+      dplyr::arrange(dplyr::desc(F1_Score), dplyr::desc(ROC_AUC)) %>%
+      dplyr::slice_head(n = 3) %>%
+      dplyr::pull(Modelo)
+    selected_mods <- intersect(ml_only, names(all_cms))
+    n_cols <- 3
+    banner_txt <- sprintf("Top 3 Algoritmos Supervisados Específicos para %s (%s — Ordenados por F1-Score)", sp_name, sc_label)
+  }
+
+  plot_list <- lapply(selected_mods, function(m_name) {
+    tab_m <- all_cms[[m_name]]
+    pal   <- get_model_color_palette(m_name)
+    acc_m <- sum(diag(tab_m)) / sum(tab_m)
+    row_i <- bench_df %>% dplyr::filter(Modelo == m_name)
+    sub_txt <- if (nrow(row_i) > 0) {
+      sprintf("F1: %.3f | Acc: %.1f%% | Sens: %.1f%% | FDR: %.1f%%",
+              row_i$F1_Score[1], acc_m * 100, row_i$Sensibilidad[1] * 100, row_i$FDR[1] * 100)
+    } else {
+      sprintf("Exactitud: %.1f%%", acc_m * 100)
+    }
+    plot_confusion_matrix(
+      tab_m,
+      title = m_name,
+      subtitle = sub_txt,
+      high_color = pal$high,
+      low_color = pal$low
+    )
+  })
+
+  title_banner <- cowplot::ggdraw() +
+    cowplot::draw_label(banner_txt, fontface = "bold", size = 13, color = "#2c3e50")
+  grid_body <- cowplot::plot_grid(plotlist = plot_list, ncol = n_cols, align = "hv")
+  print(cowplot::plot_grid(title_banner, grid_body, ncol = 1, rel_heights = c(0.06, 1)))
+}
+
+# Constructor del grafico Raincloud segmentado en 3 partes (Densidad superior + Boxplot central + Rainplot inferior)
+# inspirado en el codigo de referencia (colorspace + ggplot2), manteniendo el titulo y subtitulo originales
+plot_transfer_raincloud <- function(df_sc, mod_name, sp_name) {
+  # Niveles: FP abajo (x = 1) y TP arriba (x = 2) al aplicar coord_flip()
+  df_sc <- df_sc %>%
+    dplyr::filter(!is.na(Puntaje) & !is.na(Clase_Real)) %>%
+    dplyr::mutate(
+      Clase_Factor = factor(as.character(Clase_Real), levels = c("FP", "TP")),
+      x_num = as.numeric(Clase_Factor)
+    )
+
+  if (nrow(df_sc) < 2) return(NULL)
+
+  pal_base <- c("FP" = "#c0392b", "TP" = "#27ae60")
+  has_cs   <- requireNamespace("colorspace", quietly = TRUE)
+
+  col_dark <- if (has_cs) {
+    stats::setNames(colorspace::darken(pal_base, 0.12, space = "HLS"), names(pal_base))
+  } else {
+    c("FP" = "#922b21", "TP" = "#1e8449")
+  }
+  col_fill_dens <- if (has_cs) {
+    stats::setNames(colorspace::lighten(pal_base, 0.48), names(pal_base))
+  } else {
+    stats::setNames(grDevices::adjustcolor(pal_base, alpha.f = 0.55), names(pal_base))
+  }
+  col_fill_box <- if (has_cs) {
+    stats::setNames(colorspace::desaturate(colorspace::lighten(pal_base, 0.80), 0.40), names(pal_base))
+  } else {
+    stats::setNames(grDevices::adjustcolor(pal_base, alpha.f = 0.22), names(pal_base))
+  }
+
+  y_min  <- min(df_sc$Puntaje, na.rm = TRUE)
+  y_max  <- max(df_sc$Puntaje, na.rm = TRUE)
+  y_span <- if ((y_max - y_min) > 1e-6) (y_max - y_min) else 1.0
+
+  # 1. Parte 1 (Arriba de cada grupo): Poligono de media densidad (half-eye / cloud)
+  dens_list <- lapply(c("FP", "TP"), function(cl) {
+    sub_v <- df_sc$Puntaje[df_sc$Clase_Factor == cl]
+    if (length(sub_v) == 0) return(NULL)
+    x_b <- if (cl == "FP") 1.0 else 2.0
+    bw_val <- if (length(sub_v) > 1 && stats::sd(sub_v) > 1e-6) {
+      max(stats::bw.nrd0(sub_v) * 0.65, 0.025 * y_span)
+    } else {
+      0.04 * y_span
+    }
+    d_obj <- stats::density(
+      sub_v,
+      bw = bw_val,
+      n = 128,
+      from = y_min - 0.02 * y_span,
+      to   = y_max + 0.02 * y_span
+    )
+    d_norm <- if (max(d_obj$y) > 0) (d_obj$y / max(d_obj$y)) * 0.36 else rep(0, length(d_obj$y))
+    # La nube de densidad se ubica en la franja superior [x_b + 0.15, x_b + 0.51]
+    data.frame(
+      Clase_Factor = factor(cl, levels = c("FP", "TP")),
+      x_poly = c(rep(x_b + 0.15, length(d_obj$x)), rev(x_b + 0.15 + d_norm)),
+      y_poly = c(d_obj$x, rev(d_obj$x))
+    )
+  })
+  df_dens <- dplyr::bind_rows(dens_list)
+
+  # 2. Parte 2 (Centro de cada grupo): Estadisticos de mediana y conteo n para el boxplot central (en x_b)
+  df_stats <- df_sc %>%
+    dplyr::group_by(Clase_Factor, x_num) %>%
+    dplyr::summarise(
+      mediana = stats::median(Puntaje, na.rm = TRUE),
+      n_obs   = dplyr::n(),
+      max_y   = max(Puntaje, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      med_label = sprintf("%.2f", mediana),
+      n_label   = paste("n =", n_obs),
+      y_n_pos   = y_max + 0.045 * y_span
+    )
+
+  # 3. Parte 3 (Debajo de cada grupo): Puntos individuales con jitter (rainplot en [x_b - 0.35, x_b - 0.14])
+  set.seed(1)
+  df_sc$x_rain <- df_sc$x_num - stats::runif(nrow(df_sc), min = 0.14, max = 0.34)
+
+  ggplot2::ggplot() +
+    # Parte 1: Grafico de densidad (Half-eye superior)
+    ggplot2::geom_polygon(
+      data = df_dens,
+      ggplot2::aes(x = x_poly, y = y_poly, group = Clase_Factor, fill = Clase_Factor, color = Clase_Factor),
+      linewidth = 0.55,
+      alpha = 0.85
+    ) +
+    # Parte 2: Boxplot central
+    ggplot2::geom_boxplot(
+      data = df_sc,
+      ggplot2::aes(x = x_num, y = Puntaje, group = Clase_Factor, color = Clase_Factor),
+      fill = col_fill_box[as.character(levels(df_sc$Clase_Factor))[sort(unique(df_sc$x_num))]],
+      width = 0.20,
+      outlier.shape = NA,
+      linewidth = 0.65
+    ) +
+    # Parte 3: Rainplot (doble capa de puntos estilo Scherer: fondo blanco con borde + relleno semitransparente)
+    ggplot2::geom_point(
+      data = df_sc,
+      ggplot2::aes(x = x_rain, y = Puntaje, color = Clase_Factor),
+      fill = "white",
+      shape = 21,
+      stroke = 0.42,
+      size = 2.0
+    ) +
+    ggplot2::geom_point(
+      data = df_sc,
+      ggplot2::aes(x = x_rain, y = Puntaje, fill = Clase_Factor),
+      color = "transparent",
+      shape = 21,
+      stroke = 0.42,
+      size = 2.0,
+      alpha = 0.35
+    ) +
+    # Etiqueta de la mediana sobre el boxplot
+    ggplot2::geom_text(
+      data = df_stats,
+      ggplot2::aes(x = x_num + 0.17, y = mediana, label = med_label, color = Clase_Factor),
+      fontface = "bold",
+      size = 3.6,
+      vjust = -0.3
+    ) +
+    # Etiqueta del tamaño muestral (n = ...)
+    ggplot2::geom_text(
+      data = df_stats,
+      ggplot2::aes(x = x_num, y = y_n_pos, label = n_label, color = Clase_Factor),
+      fontface = "bold",
+      size = 3.5,
+      hjust = 0
+    ) +
+    ggplot2::coord_flip(
+      xlim = c(0.52, 2.62),
+      ylim = c(y_min - 0.05 * y_span, y_max + 0.20 * y_span),
+      clip = "off"
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = c(1, 2),
+      labels = c("FP", "TP")
+    ) +
+    ggplot2::scale_color_manual(values = col_dark, guide = "none") +
+    ggplot2::scale_fill_manual(values = col_fill_dens, guide = "none") +
+    ggplot2::labs(
+      title = paste0("Separación de Puntaje/Probabilidad: ", mod_name),
+      subtitle = paste0("Distribución en ", sp_name, " (TP vs. FP)"),
+      x = NULL,
+      y = "Probabilidad P(TP) / Puntaje"
+    ) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      panel.grid.major.y = ggplot2::element_blank(),
+      axis.ticks = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_text(
+        color = col_dark[c("FP", "TP")],
+        face = "bold",
+        size = 13
+      ),
+      axis.title.x = ggplot2::element_text(
+        face = "bold",
+        size = 10.5,
+        margin = ggplot2::margin(t = 8)
+      ),
+      plot.title = ggplot2::element_text(
+        face = "bold",
+        size = 11
+      ),
+      plot.subtitle = ggplot2::element_text(
+        color = "#5d6d7e",
+        size = 9.5,
+        margin = ggplot2::margin(0, 0, 10, 0)
+      ),
+      plot.title.position = "plot",
+      plot.margin = ggplot2::margin(12, 18, 10, 12)
+    )
+}
+
+# Renderiza el diagnostico individual de un modelo transferido sobre una especie (Matriz + Raincloud Plot segmentado)
+render_single_transfer_model <- function(sp_key, mod_name) {
+  res_sp   <- transfer_results[[sp_key]]
+  bench_df <- res_sp$bal$benchmark
+  all_cms  <- res_sp$bal$cms
+  scores_l <- res_sp$bal$scores
+  df_clean <- res_sp$bal$df_clean
+  sp_name  <- res_sp$info$short_name
+  pal      <- get_model_color_palette(mod_name)
+
+  row_m <- bench_df %>% dplyr::filter(Modelo == mod_name)
+  if (nrow(row_m) > 0) {
+    cat(sprintf(
+      "<div class='model-badge' style='background-color:%s;'>%s en %s — F1: %.3f | ROC-AUC: %.3f | Exactitud: %.2f%% | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %.2f%% | FDR: %.2f%%</div>\n\n",
+      pal$high, mod_name, sp_name,
+      row_m$F1_Score[1], row_m$ROC_AUC[1],
+      row_m$Exactitud[1] * 100,
+      row_m$Exactitud_Balanceada[1] * 100,
+      row_m$Sensibilidad[1] * 100,
+      row_m$Especificidad[1] * 100,
+      row_m$Precision[1] * 100,
+      row_m$FDR[1] * 100
+    ))
+  }
+
+  tab_cm <- all_cms[[mod_name]]
+  p_cm <- if (!is.null(tab_cm)) {
+    acc_val <- sum(diag(tab_cm)) / sum(tab_cm)
+    plot_confusion_matrix(
+      tab_cm,
+      title = paste0("Matriz de Confusión: ", mod_name),
+      subtitle = sprintf("%s (Exactitud: %.2f%%)", sp_name, acc_val * 100),
+      high_color = pal$high,
+      low_color = pal$low
+    )
+  } else {
+    NULL
+  }
+
+  p_dist <- NULL
+  sc_vec <- scores_l[[mod_name]]
+  if (!is.null(sc_vec) && length(sc_vec) == nrow(df_clean)) {
+    df_sc <- data.frame(
+      Clase_Real = df_clean$Clase_Real,
+      Puntaje = as.numeric(sc_vec)
+    ) %>% dplyr::filter(!is.na(Puntaje))
+
+    if (nrow(df_sc) > 2) {
+      p_dist <- plot_transfer_raincloud(df_sc, mod_name = mod_name, sp_name = sp_name)
+    }
+  }
+
+  if (!is.null(p_cm) && !is.null(p_dist)) {
+    print(cowplot::plot_grid(p_cm, p_dist, ncol = 2, align = "h", rel_widths = c(0.95, 1.05)))
+  } else if (!is.null(p_cm)) {
+    print(p_cm)
+  }
+}
+
+# Generador dinamico de pestañas de modelos dentro de cada especie
+build_species_model_tabs_markdown <- function(sp_key) {
+  res_sp   <- transfer_results[[sp_key]]
+  bench_df <- res_sp$bal$benchmark
+  all_cms  <- res_sp$bal$cms
+
+  ordered_models <- intersect(bench_df$Modelo, names(all_cms))
+  ordered_models <- c(ordered_models, setdiff(names(all_cms), ordered_models))
+
+  bt3 <- strrep("`", 3)
+  child_chunks <- character()
+
+  # Pestaña 1: Resumen Top 6 (2 Youden + Heuristico + 3 ML)
+  child_chunks <- c(child_chunks, sprintf(
+    "##### Resumen: Top 6 (2 Youden + Heurístico + 3 ML)\n\n%s{r top6_%s, fig.width=10, fig.height=10.2, echo=FALSE, warning=FALSE, message=FALSE}\nrender_species_cms_grid('%s', 'top6')\n%s\n",
+    bt3, sp_key, sp_key, bt3
+  ))
+
+  # Pestaña 2: Resumen 9 Modelos Estandarizados de la Tesis (3x3)
+  child_chunks <- c(child_chunks, sprintf(
+    "##### Resumen Tesis: 9 Modelos Estándar (3x3)\n\n%s{r thesis9_%s, fig.width=11, fig.height=10.5, echo=FALSE, warning=FALSE, message=FALSE}\nrender_species_cms_grid('%s', 'thesis9')\n%s\n",
+    bt3, sp_key, sp_key, bt3
+  ))
+
+  # Pestaña 3: Top 3 Algoritmos ML Especificos (por F1-Score)
+  child_chunks <- c(child_chunks, sprintf(
+    "##### Top 3 ML Específicos (F1-Score)\n\n%s{r top3f1_%s, fig.width=10.5, fig.height=4.3, echo=FALSE, warning=FALSE, message=FALSE}\nrender_species_cms_grid('%s', 'top3_f1')\n%s\n",
+    bt3, sp_key, sp_key, bt3
+  ))
+
+  # Pestañas individuales por modelo
+  for (idx in seq_along(ordered_models)) {
+    m_name  <- ordered_models[idx]
+    safe_id <- gsub("[^a-zA-Z0-9_]", "_", paste0(sp_key, "_", m_name, "_", idx))
+    child_chunks <- c(child_chunks, sprintf(
+      "##### %s\n\n%s{r mod_%s, fig.width=10.2, fig.height=4.7, results='asis', echo=FALSE, warning=FALSE, message=FALSE}\nrender_single_transfer_model('%s', '%s')\n%s\n",
+      m_name, bt3, safe_id, sp_key, m_name, bt3
+    ))
+  }
+
+  res_md <- knitr::knit_child(
+    text = paste(child_chunks, collapse = "\n\n"),
+    envir = environment(),
+    quiet = TRUE
+  )
+  cat(res_md, sep = "\n")
+}
+```
+
+## Arquitectura de Validación Filogenética según Calidad del Genoma
+
+Este reporte evalúa la capacidad de generalización inter-especie (**transferencia filogenética**) de los modelos entrenados exclusivamente sobre ***Solanum torvum*** cuando se aplican sin reentrenamiento sobre especies con distinta distancia evolutiva y **distinto grado de calidad de ensamblaje genómico**, clasificando cada secuencia funcional de CAPTUS (`marker_type == NUC`) en dos categorías binarias: **TP (`TRUE_POSITIVE`, homólogo válido)** y **FP (`FALSE_POSITIVE`, falso positivo)**:
+
+```{r arch_sources_overview, results="asis"}
+src_chr <- lookup_source_entry(sources_df, sample_id = "Scitrullifolium", genome_scale = "chromosome")
+src_ctg <- lookup_source_entry(sources_df, sample_id = "S_stella",        genome_scale = "contig")
+
+orig_chr_files <- paste(sapply(Filter(function(x) x$genome_scale == "chromosome", species_registry), function(x) x$origin_file), collapse = ", ")
+if (!nzchar(orig_chr_files)) orig_chr_files <- basename(params$cit_data)
+
+orig_ctg_files <- paste(sapply(Filter(function(x) x$genome_scale == "contig", species_registry), function(x) x$origin_file), collapse = ", ")
+if (!nzchar(orig_ctg_files)) orig_ctg_files <- basename(params$ste_data)
+
+cat("1. <span class=\"scale-badge chr\">Escala Cromosómica (`--genome_scale chromosome`)</span> **Genomas ensamblados a nivel de cromosomas o pseudomoléculas:**\n")
+if (!is.null(src_chr)) {
+  cat(sprintf("   - **Fuente del Genoma de Referencia:** %s\n", as.character(src_chr$genome_source[1])))
+  cat(sprintf("   - **Fuente del Catálogo de Genes Homólogos (`OG_ID`):** %s\n", as.character(src_chr$homology_source[1])))
+}
+cat(sprintf("   - **Archivo de Origen:** `%s`\n", orig_chr_files))
+cat("   - **Procesamiento Algorítmico (`--target_mode overlap`):** Armoniza los nombres de cromosomas/scaffolds (`seqlevels`), ejecuta **intersección espacial física estricta** (`GenomicRanges::findOverlaps`, `ignore.strand = FALSE`) entre los cóntigos funcionales de CAPTUS (`protein_match:NUC`) y los genes anotados en el archivo GFF3 cromosómico de referencia (`type == \"gene\"`), y asigna la etiqueta binaria **TP** (homólogo válido único del locus) o **FP**.\n\n")
+
+cat("2. <span class=\"scale-badge ctg\">Escala de Contigs (`--genome_scale contig`)</span> **Genomas fragmentados a nivel de cóntigos *de novo*:**\n")
+if (!is.null(src_ctg)) {
+  cat(sprintf("   - **Fuente del Genoma de Referencia:** %s\n", as.character(src_ctg$genome_source[1])))
+  cat(sprintf("   - **Fuentes del Catálogo de Genes Homólogos (`HOG_ID`) y Tabla Puente (`OG_ID <-> HOG_ID`):** %s\n", as.character(src_ctg$homology_source[1])))
+}
+cat(sprintf("   - **Archivo de Origen:** `%s`\n", orig_ctg_files))
+cat("   - **Procesamiento Algorítmico (`--target_mode target_attr`):** Dado que el ensamblaje se encuentra a escala de cóntigos sin un GFF3 cromosómico independiente, extrae el identificador del gen de referencia (`<transcript_id>-<OG_ID>`) directamente desde el atributo **`Target`** de cada registro `protein_match:NUC` en el GFF de CAPTUS, colapsa los múltiples exones de un mismo hit con `distinct()`, traduce `OG_Captus` a `HOG_ID` mediante la tabla puente `OG_ID <-> HOG_ID` y asigna la etiqueta binaria **TP** (homólogo válido único confirmado por `HOG_ID == OG_Ste`) o **FP**.\n")
+```
+
+```{r global_kpi_summary, results='asis'}
+if (length(transfer_results) > 0) {
+  cards_html <- character()
+  cards_html <- c(cards_html, paste0(
+    '<div class="kpi-card"><div class="kpi-title">Especie Donante (Entrenamiento)</div>',
+    '<div class="kpi-value"><i>S. torvum</i></div>',
+    sprintf('<div class="kpi-sub">%d modelos ML + Heurístico + 4 Youden</div></div>', length(models_bal))
+  ))
+
+  for (sp_key in names(transfer_results)) {
+    res_sp  <- transfer_results[[sp_key]]
+    df_c    <- res_sp$bal$df_clean
+    b_df    <- res_sp$bal$benchmark
+    n_tot   <- nrow(df_c)
+    n_tp    <- sum(df_c$Clase_Real == "TP", na.rm = TRUE)
+    n_fp    <- sum(df_c$Clase_Real == "FP", na.rm = TRUE)
+    best_r  <- b_df %>% dplyr::arrange(dplyr::desc(F1_Score), dplyr::desc(ROC_AUC)) %>% dplyr::slice_head(n = 1)
+    cls_col <- if (res_sp$info$genome_scale == "chromosome") "teal" else "orange"
+    sc_tag  <- if (res_sp$info$genome_scale == "chromosome") "Escala Cromosómica" else "Escala de Contigs"
+
+    cards_html <- c(cards_html, sprintf(
+      '<div class="kpi-card %s"><div class="kpi-title"><i>%s</i> (%s)</div><div class="kpi-value">%d NUC (%d TP / %d FP)</div><div class="kpi-sub">Mejor F1: %s (%.3f | AUC: %.3f)</div></div>',
+      cls_col, res_sp$info$short_name, sc_tag, n_tot, n_tp, n_fp,
+      best_r$Modelo[1], best_r$F1_Score[1], best_r$ROC_AUC[1]
+    ))
+  }
+
+  cat(paste0('<div class="kpi-grid">', paste(cards_html, collapse = ""), '</div>\n'))
+}
+```
+
+<details>
+<summary class="summary-btn">📐 Mostrar / Ocultar Fórmulas de las Métricas de Evaluación</summary>
+<div class="formula-box">
+
+Sea $TP$ (Verdaderos Positivos), $FP$ (Falsos Positivos), $TN$ (Verdaderos Negativos) y $FN$ (Falsos Negativos):
+
+1. **Exactitud (*Accuracy*):** $\text{Exactitud} = \frac{TP + TN}{TP + FP + FN + TN}$
+2. **Sensibilidad (*Recall / TPR*):** $\text{Sensibilidad} = \frac{TP}{TP + FN}$
+3. **Especificidad (*TNR*):** $\text{Especificidad} = \frac{TN}{TN + FP}$
+4. **Exactitud Balanceada (*Balanced Accuracy*):** $\text{Exactitud Balanceada} = \frac{\text{Sensibilidad} + \text{Especificidad}}{2}$
+5. **Precisión (*PPV*):** $\text{Precisión} = \frac{TP}{TP + FP}$
+6. **Tasa de Falsos Descubrimientos (*FDR*):** $\text{FDR} = 1 - \text{Precisión} = \frac{FP}{TP + FP}$
+7. **F1-Score:** $\text{F1-Score} = 2 \times \frac{\text{Precisión} \times \text{Sensibilidad}}{\text{Precisión} + \text{Sensibilidad}}$
+8. **ROC-AUC:** Área bajo la curva ROC en todos los puntos de corte posibles.
+9. **MCC (*Coeficiente de Correlación de Matthews*):** $\text{MCC} = \frac{(TP \times TN) - (FP \times FN)}{\sqrt{(TP + FP)(TP + FN)(TN + FP)(TN + FN)}}$
+
+</div>
+</details>
+
+## Validación por Especie y Tipo de Genoma (Pestañas Multiespecie)
+
+Selecciona la pestaña de cada especie validada para inspeccionar su procesamiento algorítmico según el tipo de genoma (**Escala Cromosómica** vs. **Escala de Contigs**), el resumen de secuencias evaluadas (`TP` vs. `FP`), el benchmark interactivo, las tablas exportables con indicador **`*`** de comparación entre versiones (*Balanceado* vs. *Desbalanceado*) y las matrices de confusión acompañadas de su gráfico combinado de densidad, boxplot y rainplot:
+
+```{r render_multispecies_tabset, results='asis'}
+if (length(transfer_results) == 0) {
+  cat("> **Aviso:** No se encontraron los archivos preparados ni los archivos crudos de *S. citrullifolium* o *S. stellatiglandulosum*. Ejecute `./targetcnv.sh transfer` o prepare las especies con `01_prepare_data.R`.\n")
+} else {
+  bt3 <- strrep("`", 3)
+  sp_tabs_md <- c("::: {.panel-tabset}\n")
+
+  for (sp_key in names(transfer_results)) {
+    res_sp   <- transfer_results[[sp_key]]
+    sp_info  <- res_sp$info
+    is_chr   <- (sp_info$genome_scale == "chromosome")
+    sc_short <- if (is_chr) "Escala Cromosómica" else "Escala de Contigs"
+    box_cls  <- if (is_chr) "genome-arch-box" else "genome-arch-box contig"
+    badge_cl <- if (is_chr) "chr" else "ctg"
+
+    df_c <- res_sp$bal$df_clean
+    n_tot <- nrow(df_c)
+    n_tp  <- sum(df_c$Clase_Real == "TP", na.rm = TRUE)
+    n_fp  <- sum(df_c$Clase_Real == "FP", na.rm = TRUE)
+    pct_tp <- round((n_tp / max(1, n_tot)) * 100, 1)
+    pct_fp <- round((n_fp / max(1, n_tot)) * 100, 1)
+
+    n_ogs_cap <- attr(sp_info$data, "n_ogs_captus")
+    n_ogs_brg <- attr(sp_info$data, "n_ogs_bridge")
+    bridge_txt <- if (!is_chr && !is.null(n_ogs_cap) && !is.na(n_ogs_cap)) {
+      sprintf(" | Cobertura del Puente OG↔HOG: <b>%d de %d OGs</b> de CAPTUS", n_ogs_brg, n_ogs_cap)
+    } else {
+      ""
+    }
+
+    src_lines_html <- if (isTRUE(sp_info$has_citation)) {
+      paste0(
+        sprintf('<b>• Fuente del Genoma de Referencia:</b> %s<br>\n', sp_info$genome_source),
+        sprintf('<b>• Fuente de Homología y Datos Génicos:</b> %s%s<br>\n', sp_info$db_info, bridge_txt),
+        sprintf('<b>• Archivo de Origen:</b> <code>%s</code><br>\n', sp_info$origin_file)
+      )
+    } else {
+      sprintf('<b>• Archivo de Origen:</b> <code>%s</code>%s<br>\n', sp_info$origin_file, bridge_txt)
+    }
+
+    header_block <- paste0(
+      sprintf("# *%s* (%s)\n\n", sp_info$short_name, sc_short),
+      sprintf('<div class="%s">\n', box_cls),
+      sprintf('<span class="scale-badge %s">%s</span> <b>Especie Validada:</b> <i>%s</i> (Muestra: <code>%s</code>)<br>\n',
+              badge_cl, sc_short, sp_info$sci_name, sp_info$id),
+      src_lines_html,
+      sprintf('<b>• Algoritmo de Cruce Espacial:</b> %s\n', sp_info$algo_info),
+      '</div>\n\n',
+      '<div class="kpi-grid">',
+      sprintf('<div class="kpi-card"><div class="kpi-title">Secuencias NUC Evaluadas</div><div class="kpi-value">%d</div><div class="kpi-sub">Muestra %s</div></div>', n_tot, sp_info$id),
+      sprintf('<div class="kpi-card green"><div class="kpi-title">Verdaderos Positivos (TP)</div><div class="kpi-value">%d (%s%%)</div><div class="kpi-sub">Homólogos válidos</div></div>', n_tp, pct_tp),
+      sprintf('<div class="kpi-card red"><div class="kpi-title">Falsos Positivos (FP)</div><div class="kpi-value">%d (%s%%)</div><div class="kpi-sub">Secuencias no válidas (FP)</div></div>', n_fp, pct_fp),
+      sprintf('<div class="kpi-card purple"><div class="kpi-title">Tipo de Genoma</div><div class="kpi-value">%s</div><div class="kpi-sub">Modo: %s</div></div>',
+              sc_short, if (is_chr) "overlap (GenomicRanges)" else "target_attr + Puente HOG↔OG"),
+      '</div>\n\n'
+    )
+
+    chunk_gt <- paste0(
+      sprintf("### Resumen de Secuencias de Validación (TP vs. FP) en *%s*\n\n", sp_info$short_name),
+      sprintf(
+        "%s{r gt_summary_%s, echo=FALSE, warning=FALSE, message=FALSE}\n",
+        bt3, sp_key
+      ),
+      sprintf("df_sp_curr <- transfer_results[['%s']]$bal$df_clean\n", sp_key),
+      "df_res_cl <- df_sp_curr %>%\n",
+      "  dplyr::mutate(Clase = ifelse(Clase_Real == 'TP', 'TP (Verdadero Positivo)', 'FP (Falso Positivo)')) %>%\n",
+      "  dplyr::group_by(Clase) %>%\n",
+      "  dplyr::summarise(\n",
+      "    Secuencias = dplyr::n(),\n",
+      "    Porcentaje = round((dplyr::n() / nrow(df_sp_curr)) * 100, 2),\n",
+      "    `Media % Recuperado` = round(mean(as.numeric(pct_recovered), na.rm = TRUE), 2),\n",
+      "    `Media % Identidad`  = round(mean(as.numeric(pct_identity), na.rm = TRUE), 2),\n",
+      "    `Media Score`        = round(mean(as.numeric(score), na.rm = TRUE), 2),\n",
+      "    `Media WScore`       = round(mean(as.numeric(wscore), na.rm = TRUE), 2),\n",
+      "    .groups = 'drop'\n",
+      "  ) %>% dplyr::arrange(dplyr::desc(Clase))\n",
+      "DT::datatable(df_res_cl, rownames = FALSE,\n",
+      sprintf("  caption = 'Resumen de secuencias evaluadas en %s (Total = %d secuencias NUC)',\n", sp_info$short_name, n_tot),
+      "  options = list(dom = 't', ordering = FALSE, autoWidth = FALSE)) %>%\n",
+      "  DT::formatCurrency(columns = 'Porcentaje', currency = '%', before = FALSE, digits = 2)\n",
+      sprintf("%s\n\n", bt3)
+    )
+
+    chunk_bench <- paste0(
+      sprintf("### Benchmark Multimétrica de Transferencia en *%s*\n\n", sp_info$short_name),
+      "Por defecto se muestran los **6 modelos clave** (los **2 mejores cortes de Youden**, el **Modelo Heurístico** y los **3 mejores modelos de ML** excluyendo `Ensamble_Stacking`), ordenados de arriba a abajo del mejor al peor **ROC-AUC**. Usa los botones desplegables debajo del gráfico para ver los **9 modelos estandarizados de la tesis**, **todos los modelos evaluados** o desplegar la **tabla completa con comparación de escenarios (`*`)**:\n\n",
+      sprintf("%s{r plot_top6_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
+      sprintf("b_full <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
+      "t6 <- get_top6_summary_models(b_full)\n",
+      "df_t6 <- b_full %>% dplyr::filter(Modelo %in% t6) %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))\n",
+      sprintf("build_interactive_benchmark_plotly(df_t6, species_title = '%s (%s)', view_label = '6 Modelos Clave')\n", sp_info$short_name, sc_short),
+      sprintf("%s\n\n", bt3),
+
+      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}\">\n",
+      sprintf("<summary class=\"summary-btn\">📊 Ver Benchmark de los 9 Modelos Estandarizados de la Tesis (%s)</summary>\n\n", sp_info$short_name),
+      sprintf("%s{r plot_thesis9_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
+      sprintf("b_full <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
+      "t9 <- get_thesis_9_models(b_full)\n",
+      "df_t9 <- b_full %>% dplyr::filter(Modelo %in% t9) %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))\n",
+      sprintf("build_interactive_benchmark_plotly(df_t9, species_title = '%s (%s)', view_label = '9 Modelos Estándar Tesis')\n", sp_info$short_name, sc_short),
+      sprintf("%s\n\n</details>\n\n", bt3),
+
+      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}\">\n",
+      sprintf("<summary class=\"summary-btn\">📊 Ver Benchmark de Todos los Modelos Evaluados (%s)</summary>\n\n", sp_info$short_name),
+      sprintf("%s{r plot_all_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
+      sprintf("b_full <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
+      sprintf("build_interactive_benchmark_plotly(b_full, species_title = '%s (%s)', view_label = paste0('Todos los ', nrow(b_full), ' Modelos Evaluados'))\n", sp_info$short_name, sc_short),
+      sprintf("%s\n\n</details>\n\n", bt3),
+
+      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize')); if(window.jQuery && jQuery.fn.dataTable){jQuery.fn.dataTable.tables({visible:true, api:true}).columns.adjust();}}, 60);}\">\n",
+      "<summary class=\"summary-btn\">📋 Ver Tabla</summary>\n\n",
+      "<div class=\"asterisk-note\">\n",
+      "**Nota sobre el asterisco (`*`) en la tabla de transferencia:** Los modelos marcados con **`*`** en la columna `Modelo` (y detallados en `Mejor_Version_FDR`) logran un mejor desempeño global sobre esta especie cuando se transfieren desde su versión entrenada en el **Escenario Desbalanceado** de *S. torvum* en lugar del *Balanceado*, evaluado con fuerte ponderación en el control del $\\text{FDR}$:\n",
+      "$$\\text{Índice Global}_{\\text{FDR}} = 0.45(1 - \\text{FDR}) + 0.20\\,\\text{F1} + 0.15\\,\\text{MCC} + 0.10\\,\\text{Exactitud Bal.} + 0.10\\,\\text{ROC-AUC}$$\n",
+      "</div>\n\n",
+      sprintf("%s{r table_full_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
+      sprintf("b_bal_sp   <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
+      sprintf("b_unbal_sp <- transfer_results[['%s']]$unbal$benchmark\n", sp_key),
+      sprintf("format_benchmark_dt(b_bal_sp, other_df = b_unbal_sp, current_scen = 'Balanceado', other_scen = 'Desbalanceado', caption_text = 'Transferencia en %s (%s) — Modelos entrenados en S. torvum (* indica mejor transferencia desde versión Desbalanceada)')\n", sp_info$short_name, sc_short),
+      sprintf("%s\n\n</details>\n\n", bt3)
+    )
+
+    chunk_cms <- paste0(
+      sprintf("### Matrices de Confusión y Diagnóstico por Modelo (*%s*)\n\n", sp_info$short_name),
+      "Las tres primeras pestañas muestran el **Resumen Top 6 Clave**, la **Cuadrícula 3x3 de los 9 Modelos Estandarizados de la Tesis** y los **Top 3 Algoritmos ML según F1-Score**; las pestañas siguientes permiten consultar uno por uno todos los modelos transferidos junto con su gráfico segmentado de densidad, boxplot y rainplot:\n\n",
+      "::: {.panel-tabset}\n\n",
+      sprintf("%s{r tabs_cms_%s, results='asis', echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
+      sprintf("build_species_model_tabs_markdown('%s')\n", sp_key),
+      sprintf("%s\n\n:::\n\n", bt3)
+    )
+
+    sp_tabs_md <- c(sp_tabs_md, header_block, chunk_gt, chunk_bench, chunk_cms)
+  }
+
+  # Pestaña Final: Comparativa Multiespecie y Filtro por Escala de Genoma (sin emojis en el titulo)
+  comp_tab_md <- paste0(
+    "# Comparativa Multiespecie y por Escala de Genoma\n\n",
+    "### Contraste de Desempeño según Calidad del Genoma (*S. torvum* vs. Escala Cromosómica vs. Escala de Contigs)\n\n",
+    "El siguiente gráfico interactivo compara el **F1-Score**, **ROC-AUC**, **Exactitud**, **Sensibilidad** y **FDR** de los modelos entre la especie donante (*S. torvum*) y las especies receptoras según la calidad de su genoma (**Escala Cromosómica** en *S. citrullifolium* vs. **Escala de Contigs** en *S. stellatiglandulosum*). Usa el menú desplegable superior para cambiar la métrica comparada:\n\n",
+    sprintf("%s{r multispecies_comp_plot, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3),
+    "if (nrow(df_multiespecie_all) > 0) {\n",
+    "  key_mods <- c('Youden_pct_recovered', 'Youden_pct_identity', 'Weighted_Heuristic',\n",
+    "                'ElasticNet', 'NaiveBayes', 'SVM_Polinomial', 'MLP', 'Red_Neuronal', 'LDA', 'Ensamble_Stacking', 'Consenso_7_Modelos')\n",
+    "  df_comp_sub <- df_multiespecie_all %>%\n",
+    "    dplyr::filter(Modelo %in% key_mods) %>%\n",
+    "    dplyr::mutate(Etiqueta_Especie = paste0(Especie, ' [', Escala_Genoma, ']'))\n",
+    "  sp_groups <- unique(df_comp_sub$Etiqueta_Especie)\n",
+    "  palette_sp <- c('#2c3e50', '#16a085', '#d35400', '#8e44ad', '#2980b9')\n",
+    "  fig_comp <- plotly::plot_ly(height = 680)\n",
+    "  metrics_comp <- c('F1_Score', 'ROC_AUC', 'Exactitud_Balanceada', 'Sensibilidad', 'Especificidad', 'FDR')\n",
+    "  for (m_idx in seq_along(metrics_comp)) {\n",
+    "    m_col <- metrics_comp[m_idx]\n",
+    "    for (s_idx in seq_along(sp_groups)) {\n",
+    "      sp_lbl <- sp_groups[s_idx]\n",
+    "      sub_d <- df_comp_sub %>% dplyr::filter(Etiqueta_Especie == sp_lbl)\n",
+    "      vals_m <- round(as.numeric(sub_d[[m_col]]), 3)\n",
+    "      fig_comp <- fig_comp %>% plotly::add_trace(\n",
+    "        y = sub_d$Modelo,\n",
+    "        x = vals_m,\n",
+    "        name = sp_lbl,\n",
+    "        type = 'bar',\n",
+    "        orientation = 'h',\n",
+    "        visible = (m_idx == 1),\n",
+    "        marker = list(color = palette_sp[((s_idx - 1) %% length(palette_sp)) + 1]),\n",
+    "        text = sprintf('%.3f', vals_m),\n",
+    "        textposition = 'auto',\n",
+    "        hovertemplate = paste0('<b>%{y}</b><br>', sp_lbl, '<br>', m_col, ': %{x:.3f}<extra></extra>')\n",
+    "      )\n",
+    "    }\n",
+    "  }\n",
+    "  n_sp <- length(sp_groups)\n",
+    "  btns_comp <- lapply(seq_along(metrics_comp), function(m_idx) {\n",
+    "    vis <- rep(FALSE, length(metrics_comp) * n_sp)\n",
+    "    idx_range <- ((m_idx - 1) * n_sp + 1):(m_idx * n_sp)\n",
+    "    vis[idx_range] <- TRUE\n",
+    "    list(method = 'restyle', args = list('visible', as.list(vis)), label = paste('Métrica:', metrics_comp[m_idx]))\n",
+    "  })\n",
+    "  fig_comp %>% plotly::layout(\n",
+    "    title = list(text = '<b>Comparativa Multiespecie según Escala del Genoma (Cromosómico vs. Contigs)</b>', x = 0.5),\n",
+    "    barmode = 'group',\n",
+    "    xaxis = list(title = 'Puntaje (0 a 1)', range = c(0, 1.08)),\n",
+    "    yaxis = list(title = ''),\n",
+    "    legend = list(orientation = 'h', y = -0.10, x = 0.5, xanchor = 'center'),\n",
+    "    margin = list(l = 190, r = 30, t = 85, b = 100),\n",
+    "    updatemenus = list(list(type = 'dropdown', active = 0, x = 0, y = 1.10, xanchor = 'left', buttons = btns_comp))\n",
+    "  )\n",
+    "}\n",
+    sprintf("%s\n\n", bt3),
+    "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize')); if(window.jQuery && jQuery.fn.dataTable){jQuery.fn.dataTable.tables({visible:true, api:true}).columns.adjust();}}, 60);}\">\n",
+    "<summary class=\"summary-btn\">📋 Ver Tabla Comparativa Multiespecie Completa</summary>\n\n",
+    sprintf("%s{r table_multispecies_all, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3),
+    "if (nrow(df_multiespecie_all) > 0) {\n",
+    "  format_benchmark_dt(df_multiespecie_all, other_df = NULL, caption_text = 'Tabla Consolidada Multiespecie (Donante S. torvum + Especies Validadas a Escala Cromosómica y Escala de Contigs)')\n",
+    "}\n",
+    sprintf("%s\n\n</details>\n\n", bt3)
+  )
+
+  sp_tabs_md <- c(sp_tabs_md, comp_tab_md, ":::\n")
+  res_all_md <- knitr::knit_child(
+    text = paste(sp_tabs_md, collapse = "\n"),
+    envir = environment(),
+    quiet = TRUE
+  )
+  cat(res_all_md, sep = "\n")
+}
+```
