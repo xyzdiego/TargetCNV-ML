@@ -1,12 +1,12 @@
 # TargetCNV-ML: Aprendizaje Automático e Inferencia Espacial para Variaciones en el Número de Copias en Captura de Genes
 
-[🇬🇧 English Version](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [📗 Guía de Ejecución (ES)](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [📘 Execution Guide (EN)](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md)
+[🇬🇧 English Version](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [📗 Guía de Ejecución (ES)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [📘 Execution Guide (EN)](https://github.com/xyzdiego/TargetCNV-ML/blob/main/EXECUTION_GUIDE.md)
 
-[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
-[](https://www.r-project.org/)
-[](https://opensource.org/licenses/MIT)
-[](#inicio-rápido-batería-de-pruebas)
-[](https://rstudio.github.io/renv/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
+[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
+[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
+[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
 
 Un paquete de software bioinformático modular, reproducible y ejecutable por línea de comandos (CLI), diseñado para detectar **Variaciones en el Número de Copias (CNV)** y resolver **expansiones de genes homólogos** a partir de datos de secuenciación masiva por Captura de Genes (*Target Capture*).
 
@@ -128,14 +128,14 @@ Valide su instalación ejecutando la batería de pruebas automatizada de punta a
 >    ```bash
 >    ./targetcnv.sh zenodo
 >    ```
-> 2. O descárguelo y descomprímalo manualmente en la raíz del proyecto desde el DOI de Zenodo [10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987):
+> 2. O descárguelo y descomprímalo manualmente en la raíz del proyecto desde el DOI de Zenodo [10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987):
 >    ```bash
 >    curl -L -o TargetCNV_Models.zip https://zenodo.org/api/records/23463987/files/TargetCNV_Models.zip/content
 >    unzip -o TargetCNV_Models.zip
 >    ```
 
 > [!TIP]
-> Para consultar una guía completa paso a paso con cada comando, flag, opción, pruebas de transferibilidad entre especies, entrenamiento con datos nuevos y actualización de modelos en Zenodo, consulte [GUIA\_EJECUCION.md](https://www.google.com/search?q=GUIA_EJECUCION.md) (o su versión en inglés [EXECUTION\_GUIDE.md](https://www.google.com/search?q=EXECUTION_GUIDE.md)).
+> Para consultar una guía completa paso a paso con cada comando, flag, opción, pruebas de transferibilidad entre especies, entrenamiento con datos nuevos y actualización de modelos en Zenodo, consulte [GUIA\_EJECUCION.md](GUIA_EJECUCION.md) (o su versión en inglés [EXECUTION\_GUIDE.md](EXECUTION_GUIDE.md)).
 
 ### Ejecución Rápida en 1 Línea (`./targetcnv.sh`)
 
@@ -274,8 +274,8 @@ Aplica el **Sistema de Consenso de 7 Modelos** (Regla de Mayoría $\ge 4/7$ voto
 
 ## Citación y Fuentes de Datos de Referencia
 
-- **Genomas de referencia a escala cromosómica (*Solanum torvum* y *Solanum citrullifolium*):** Reportados y publicados en el portal **Solanum Pan-Genomics** ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), en **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)) y en **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.google.com/search?q=https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Los datos de genes y ortogrupos (`OG_ID`) provienen de: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
-- **Genoma de referencia a escala de cóntigos (*Solanum stellatiglandulosum*):** El genoma fue reportado en **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) con **Accession: `PRJNA1070281` (ID: `1070281`)** por el **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Los datos de genes y homología (`HOG_ID`) provienen de: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://www.google.com/search?q=https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://www.google.com/search?q=https://doi.org/10.1007/s11103-026-01718-6).
+- **Genomas de referencia a escala cromosómica (*Solanum torvum* y *Solanum citrullifolium*):** Reportados y publicados en el portal **Solanum Pan-Genomics** ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), en **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)) y en **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Los datos de genes y ortogrupos (`OG_ID`) provienen de: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Genoma de referencia a escala de cóntigos (*Solanum stellatiglandulosum*):** El genoma fue reportado en **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) con **Accession: `PRJNA1070281` (ID: `1070281`)** por el **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Los datos de genes y homología (`HOG_ID`) provienen de: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
 - *(Para insertar estas citas en los reportes interactivos HTML, suministre `--sources data/reference/sources_citations.tsv` o `-P sources_file:data/reference/sources_citations.tsv`; de lo contrario, los reportes mostrarán únicamente el archivo de origen).*
 
 Si utiliza **TargetCNV-ML** en su investigación académica o en pipelines de genómica aplicada, por favor cite el software y el trabajo de tesis correspondiente:
@@ -306,5 +306,5 @@ Si utiliza **TargetCNV-ML** en su investigación académica o en pipelines de ge
 
 ## Licencia
 
-Este proyecto está distribuido bajo la **Licencia MIT** — consulte el archivo [LICENSE](https://www.google.com/search?q=LICENSE) para más detalles.  
+Este proyecto está distribuido bajo la **Licencia MIT** — consulte el archivo [LICENSE](LICENSE) para más detalles.  
 Los conjuntos de datos y los modelos preentrenados alojados en Zenodo están licenciados bajo la **Licencia Creative Commons Atribución 4.0 Internacional (CC BY 4.0)**.

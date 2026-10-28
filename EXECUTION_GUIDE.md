@@ -1,12 +1,12 @@
 # TargetCNV-ML Execution Guide
 
-[🇪🇸 Guía de Ejecución en Español](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [🇬🇧 English README](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [🇪🇸 README en Español](https://www.google.com/search?q=https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md)
+[🇪🇸 Guía de Ejecución en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [🇬🇧 English README](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [🇪🇸 README en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md)
 
-[DOI](https://www.google.com/url?sa=E&source=gmail&q=https://doi.org/10.5281/zenodo.23463987)
-[](https://www.r-project.org/)
-[](https://opensource.org/licenses/MIT)
-[](#inicio-rápido-batería-de-pruebas)
-[](https://rstudio.github.io/renv/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
+[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
+[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
+[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
 
 **TargetCNV-ML** is a modular, reproducible, command-line (CLI) bioinformatics software package that detects **Copy Number Variations (CNV)** and resolves **homologous gene expansions** from target capture (*Hyb-Seq* / *Target Enrichment*) sequencing assemblies.
 
@@ -18,7 +18,7 @@ In this guide you will find:
 2. Directory structure, file layout, and workflow diagram of the repository.
 3. One-line execution with `./targetcnv.sh` and a complete reference of all options for the three CLI modules (`01_prepare_data.R`, `02_train_models.R`, `03_cnv_inference.R`) and the two interactive Quarto HTML reports (`training_report.qmd` and `report_template.qmd`).
 4. **Workflow 1:** Running the quick test with the included synthetic dataset (*Minimal Working Example* / MWE).
-5. **Workflow 2:** Downloading, running, and updating the pretrained models hosted on **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)).
+5. **Workflow 2:** Downloading, running, and updating the pretrained models hosted on **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987)).
 6. **Workflow 3:** Training models with new genomic data and testing **cross-species transferability** (on chromosome-level assemblies like *Solanum citrullifolium* and fragmented assemblies like *Solanum stellatiglandulosum*).
 7. **Workflow 4:** Reproducing the ***Solanum torvum*** reference experiment step by step.
 8. Citation and license.
@@ -342,7 +342,7 @@ This command runs all three steps in isolation (without overwriting root `models
 ## 5. Workflow 2: Downloading, Using & Updating Models on Zenodo
 
 The models trained on the *Solanum torvum* reference genome are archived on Zenodo:
-- **DOI:** [10.5281/zenodo.23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)
+- **DOI:** [10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987)
 - **File:** `TargetCNV_Models.zip`
 
 ### 5.1 Automatic Download & Inference in 1 Line
@@ -373,7 +373,7 @@ If you want to publish a new version of `TargetCNV_Models.zip` on Zenodo contain
    md5sum TargetCNV_Models.zip
    ```
 2. **Upload the new version on Zenodo:**
-   - Open your Zenodo record ([https://zenodo.org/records/23463987](https://www.google.com/search?q=https://www.google.com/url%3Fsa%3DE%26source%3Dgmail%26q%3Dhttps://doi.org/10.5281/zenodo.23463987)) and click **"New version"**.
+   - Open your Zenodo record ([https://zenodo.org/records/23463987](https://doi.org/10.5281/zenodo.23463987)) and click **"New version"**.
    - Delete the old `TargetCNV_Models.zip` in the draft, upload the newly created `TargetCNV_Models.zip`, update the version tag (e.g., `v1.1.0`), and click **"Publish"**.
 3. **Update `targetcnv.sh` with the new record ID and MD5 hash:**
    - Copy the new `record_id` assigned by Zenodo and the MD5 hash from `md5sum TargetCNV_Models.zip`, and update lines 22–24 in `targetcnv.sh`:
@@ -404,8 +404,8 @@ If you want to publish a new version of `TargetCNV_Models.zip` on Zenodo contain
 
 ### 6.2 Cross-Species Transferability Tests (*S. citrullifolium* & *S. stellatiglandulosum*)
 
-- **Chromosome-scale reference genomes (*S. torvum* and *S. citrullifolium*):** Assemblies and `.gff3` annotations are reported and published at the **Solanum Pan-Genomics** portal ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), the **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)), and **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.google.com/search?q=https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Homologous gene and orthogroup (`OG_ID`) data come from: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
-- **Contig-scale reference genome (*S. stellatiglandulosum*):** Genome assembly reported in **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) under **Accession: `PRJNA1070281` (ID: `1070281`)** by the **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Homologous gene and hierarchical orthogroup (`HOG_ID`) data come from: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://www.google.com/search?q=https://doi.org/10.1016/j.pbi.2025.102727); and **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://www.google.com/search?q=https://doi.org/10.1007/s11103-026-01718-6).
+- **Chromosome-scale reference genomes (*S. torvum* and *S. citrullifolium*):** Assemblies and `.gff3` annotations are reported and published at the **Solanum Pan-Genomics** portal ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), the **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)), and **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Homologous gene and orthogroup (`OG_ID`) data come from: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Contig-scale reference genome (*S. stellatiglandulosum*):** Genome assembly reported in **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) under **Accession: `PRJNA1070281` (ID: `1070281`)** by the **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Homologous gene and hierarchical orthogroup (`HOG_ID`) data come from: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); and **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
 
 #### Case A: Chromosome-Level Assembly (*Solanum citrullifolium*)
 ```bash
@@ -498,4 +498,4 @@ If you want to publish a new version of `TargetCNV_Models.zip` on Zenodo contain
 }
 ```
 
-Released under the **MIT License** — see [LICENSE](https://www.google.com/search?q=LICENSE) for details. Datasets and pre-trained models on Zenodo are licensed under **CC BY 4.0**.
+Released under the **MIT License** — see [LICENSE](LICENSE) for details. Datasets and pre-trained models on Zenodo are licensed under **CC BY 4.0**.
