@@ -47,8 +47,6 @@ data/test_data/results/
 *_files/
 *_cache/
 /.quarto/
-reporte_entrenamiento.html
-reporte_inferencia.html
 data/test_data/reporte_*.html
 data/test_data/prepared/
 data/test_data/models/
