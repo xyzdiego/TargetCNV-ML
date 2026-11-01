@@ -211,8 +211,7 @@ write.table(dict_df, file = file.path(out_dir, "mock_dictionary.tsv"),
             sep = "\t", row.names = FALSE, quote = FALSE)
 cat(sprintf("  -> %d loci anotados en el diccionario\n", n_known))
 
-# --- 4. Generar mock_captus_extract.tsv con separacion bimodal nitida ---
-# --- 4. Generar mock_captus_extract.tsv con separacion bimodal y solape pronunciado ---
+# --- 4. Generar mock_captus_extract.tsv con separación bimodal y solape moderado ---
 cat("Generando mock_captus_extract.tsv ...\n")
 
 # Para satisfacer exactamente 1800 secuencias analizadas:
@@ -346,13 +345,8 @@ for (s_idx in seq_along(samples)) {
 
 df_tsv <- do.call(rbind, rows)
 
-# --- Generacion estratificada continua con distribuciones monomodales y colas suaves ---
-# Requerimiento:
-# 1. Distribuciones monomodales (1 pico unico por clase y metrica).
-# 2. Solapamiento de densidades entre 0.016 y 0.020 (en torno a 0.02).
-# 3. Colas suaves sin cortes bruscos en raincloud: degradé en la cola inferior de la distribucion verde,
-#    y degradé en ambas colas de la distribucion roja (con corte ligeramente mas marcado en cola superior).
-# 4. Totalizar exactamente 1800 secuencias analizadas.
+# Ajuste paramétrico mediante cuantiles Beta y cópula gaussiana para garantizar
+# distribuciones monomodales continuas con solape realista entre homólogos válidos y ruido.
 
 tp_indices <- which(df_tsv$is_functional & df_tsv$marker_type == "NUC")
 fp_indices <- which(!df_tsv$is_functional & df_tsv$marker_type == "NUC")

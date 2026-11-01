@@ -1,0 +1,104 @@
+Bootstrap: docker
+From: ubuntu:24.04
+
+%labels
+    Project TargetCNV-ML
+    Version 1.1.0
+    Author Diego Andres Benitez Duarte
+    R_Version 4.6.2
+    Bioconductor_Version 3.23
+    Quarto_Version 1.10.20
+
+%files
+    renv.lock /opt/targetcnv-ml/renv.lock
+    DESCRIPTION /opt/targetcnv-ml/DESCRIPTION
+    renv/settings.json /opt/targetcnv-ml/renv/settings.json
+
+%environment
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+    export R_VERSION=4.6.2
+    export BIOCONDUCTOR_VERSION=3.23
+    export QUARTO_VERSION=1.10.20
+    export PATH="/opt/R/4.6.2/bin:/usr/local/bin:${PATH}"
+    export R_LIBS_USER="/opt/targetcnv-ml/library"
+    export RENV_CONFIG_AUTOLOADER_ENABLED=FALSE
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        gdebi-core \
+        gfortran \
+        git \
+        libbz2-dev \
+        libcurl4-openssl-dev \
+        libfontconfig1-dev \
+        libfreetype6-dev \
+        libfribidi-dev \
+        libharfbuzz-dev \
+        libicu-dev \
+        libjpeg-dev \
+        liblzma-dev \
+        libpcre2-dev \
+        libpng-dev \
+        libssl-dev \
+        libtiff5-dev \
+        libxml2-dev \
+        locales \
+        pandoc \
+        pkg-config \
+        unzip \
+        wget \
+        zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+    # Instalar R 4.6.2 congelado desde binarios oficiales de Posit para Ubuntu 24.04 (noble)
+    R_VER="4.6.2"
+    curl -fsSL -o /tmp/r-${R_VER}.deb \
+        "https://cdn.posit.co/r/ubuntu-2404/pkgs/r-${R_VER}_1_amd64.deb"
+    gdebi -n /tmp/r-${R_VER}.deb
+    rm -f /tmp/r-${R_VER}.deb
+    ln -sf /opt/R/${R_VER}/bin/R /usr/local/bin/R
+    ln -sf /opt/R/${R_VER}/bin/Rscript /usr/local/bin/Rscript
+
+    # Instalar Quarto CLI 1.10.20 congelado
+    QUARTO_VER="1.10.20"
+    curl -fsSL -o /tmp/quarto-${QUARTO_VER}.deb \
+        "https://github.com/quarto-dev/quarto-cli/releases/download/v${QUARTO_VER}/quarto-${QUARTO_VER}-linux-amd64.deb"
+    dpkg -i /tmp/quarto-${QUARTO_VER}.deb
+    rm -f /tmp/quarto-${QUARTO_VER}.deb
+
+    # Restaurar exactamente las versiones congeladas en renv.lock (R 4.6.2 + Bioconductor 3.23)
+    mkdir -p /opt/targetcnv-ml/library
+    Rscript -e '
+      options(repos = c(CRAN = "https://cloud.r-project.org"))
+      install.packages(c("renv", "BiocManager"), lib = "/opt/targetcnv-ml/library")
+      .libPaths(c("/opt/targetcnv-ml/library", .libPaths()))
+      Sys.setenv(RENV_CONFIG_PAK_ENABLED = "FALSE")
+      renv::restore(
+        project = "/opt/targetcnv-ml",
+        library = "/opt/targetcnv-ml/library",
+        lockfile = "/opt/targetcnv-ml/renv.lock",
+        prompt = FALSE
+      )
+    '
+
+%runscript
+    exec ./targetcnv.sh "$@"
+
+%test
+    R --version | grep -q "4.6.2"
+    quarto --version | grep -q "1.10.20"
+    Rscript -e '
+      .libPaths(c("/opt/targetcnv-ml/library", .libPaths()))
+      pkgs <- c("caret", "xgboost", "caretEnsemble", "GenomicRanges", "rtracklayer", "pROC", "testthat")
+      missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+      if (length(missing) > 0) stop("Missing packages: ", paste(missing, collapse = ", "))
+    '
+

@@ -1,489 +1,526 @@
 # TargetCNV-ML Execution Guide
 
-[🇪🇸 Guía de Ejecución en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/GUIA_EJECUCION.md) | [🇬🇧 English README](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README.md) | [🇪🇸 README en Español](https://github.com/xyzdiego/TargetCNV-ML/blob/main/README_ES.md)
+[Guía de Ejecución en Español](GUIA_EJECUCION.md) | [English README](README.md) | [README en Español](README_ES.md)
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23463987.svg)](https://doi.org/10.5281/zenodo.23463987)
-[![Versión de R](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue.svg)](https://www.r-project.org/)
-[![Licencia: MIT](https://img.shields.io/badge/Licencia-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado%20(Exitoso)-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
-[![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20aislado-purple.svg)](https://rstudio.github.io/renv/)
+[![R Version](https://img.shields.io/badge/R-4.6.2%20%7C%20Bioc%203.23-blue.svg)](https://www.r-project.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Pipeline Status](https://img.shields.io/badge/Pipeline-Validated-brightgreen.svg)](#4-workflow-1-quick-test-with-synthetic-data-mwe)
+[![Environment: renv](https://img.shields.io/badge/Environment-renv%20%7C%20Pixi%20%7C%20Apptainer-purple.svg)](https://rstudio.github.io/renv/)
 
-**TargetCNV-ML** is a modular, reproducible, command-line (CLI) bioinformatics software package that detects **Copy Number Variations (CNV)** and resolves **homologous gene expansions** from target capture (*Hyb-Seq* / *Target Enrichment*) sequencing assemblies.
+**TargetCNV-ML** is an R package and command-line workflow designed to estimate **gene Copy Number Variations (CNV)** and distinguish **functional gene homologs** from technical assembly artifacts in **Target Capture** (*Hyb-Seq* / *Target Enrichment*) sequencing datasets.
 
 > [!IMPORTANT]
-> **Language Availability Notice:** Currently, the internal workflow of the files, CLI console messages, output table column names, and interactive Quarto HTML reports (`reporte_entrenamiento.html` and `reporte_inferencia.html`) are built in **Spanish**. Full English localization of the internal workflow and interactive reports will be available in upcoming updates.
+> **Internal Workflow Language Notice:** Console log messages, output table column names, and the Quarto HTML reports compiled inside `reports/` (`reporte_entrenamiento.html`, `reporte_inferencia.html`, and `reporte_transferencia.html`) are currently written in **Spanish**.
 
-In this guide you will find:
-1. System requirements, installation steps, and environment verification (`./targetcnv.sh doctor` and `./targetcnv.sh snapshot`).
-2. Directory structure, file layout, and workflow diagram of the repository.
-3. One-line execution with `./targetcnv.sh` and a complete reference of all options for the three CLI modules (`01_prepare_data.R`, `02_train_models.R`, `03_cnv_inference.R`) and the two interactive Quarto HTML reports (`training_report.qmd` and `report_template.qmd`).
-4. **Workflow 1:** Running the quick test with the included synthetic dataset (*Minimal Working Example* / MWE).
-5. **Workflow 2:** Downloading, running, and updating the pretrained models hosted on **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987)).
-6. **Workflow 3:** Training models with new genomic data and testing **cross-species transferability** (on chromosome-level assemblies like *Solanum citrullifolium* and fragmented assemblies like *Solanum stellatiglandulosum*).
-7. **Workflow 4:** Reproducing the ***Solanum torvum*** reference experiment step by step.
+Contents of this guide:
+1. System requirements, reproducible installation (`./targetcnv.sh restore`, `pixi.toml`, `Apptainer.def`), and environment checks (`./targetcnv.sh doctor`).
+2. Repository file layout and read-only Quarto reporting architecture.
+3. Full CLI reference for `./targetcnv.sh` and the four modules (`01_prepare_data.R`, `02_train_models.R`, `03_cnv_inference.R`, `04_evaluate_transferability.R`), including warnings on destructive flags.
+4. **Workflow 1:** Automated verification via `tests/testthat` and the Minimal Working Example (MWE).
+5. **Workflow 2:** Downloading, MD5 verification, and updating the pre-trained model archive on **Zenodo** ([DOI: 10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987)).
+6. **Workflow 3:** Training on new species and running **cross-species transferability and orthogroup copy-number concordance** (*Solanum citrullifolium* and *Solanum stellatiglandulosum*).
+7. **Workflow 4:** Reproducing the ***Solanum torvum*** reference experiment.
 8. Citation and license.
 
 ---
 
-## 1. System Requirements & Installation
+## 1. System Requirements and Installation
 
 ### Software Requirements
-- **Operating System:** Linux (Ubuntu 20.04+, Debian 11+, Arch/CachyOS, Fedora), macOS, or Windows (via WSL2).
-- **R:** $\ge 4.0.0$ (R 4.3+ or 4.6 recommended).
-- **Quarto CLI:** $\ge 1.3+$ (required to compile the interactive `.html` reports).
-- **System tools:** `bash`, `curl` or `wget`, `unzip`, `md5sum`, `gcc`, `g++`, `make`.
+- **Operating System:** Linux (Ubuntu 22.04/24.04, Debian 12+, Arch/CachyOS, Fedora), macOS, or Windows via WSL2.
+- **R:** `4.6.2` recommended for exact lockfile alignment with `renv.lock` and Bioconductor `3.23` (compatible with R $\ge 4.3$).
+- **Quarto CLI:** `1.10.20` (or $\ge 1.4$) to render `.html` reports.
+- **System tools:** `bash`, `curl` or `wget`, `unzip`, `md5sum`, `gcc`, `g++`, `gfortran`, `make`.
 
-### Installing & Restoring the R Environment (`renv`)
-
-The project uses `renv` to isolate and reproduce the exact versions of all bioinformatics and machine learning libraries:
+### 1.1 Strict Lockfile Restoration via `renv` (Recommended)
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/xyzdiego/TargetCNV-ML.git
 cd TargetCNV-ML
 
-# 2. Make scripts executable and restore R packages
+# 2. Set executable permissions and restore exact package versions from renv.lock
 chmod +x targetcnv.sh run_test_pipeline.sh scripts/*.R
-Rscript -e "renv::restore()"
+./targetcnv.sh restore
 
-# (Fast alternative if packages are already installed in your system R library):
-./targetcnv.sh snapshot
-
-# 3. Check that all tools and R libraries are ready
+# 3. Verify system utilities, Quarto, and all R dependencies
 ./targetcnv.sh doctor
 ```
 
+> [!CAUTION]
+> **Environment Reproducibility Warning:** Never use `renv::hydrate()` or `renv::snapshot()` as a user installation command. Hydrating links unpinned package versions from the host system R library and overwrites `renv.lock`. Always run `./targetcnv.sh restore` (or `./targetcnv.sh setup`), which executes `renv::restore(prompt = FALSE)` strictly following `renv.lock`.
+
+### 1.2 Frozen Environments via Pixi or Apptainer
+
+To freeze R, compiled system libraries, R packages, and Quarto (`1.10.20`) together:
+
+```bash
+# Pixi environment (conda-forge + bioconda defined in pixi.toml)
+pixi install
+pixi run doctor
+pixi run test
+
+# Apptainer / Singularity container (defined in Apptainer.def)
+apptainer build targetcnv-ml.sif Apptainer.def
+apptainer exec targetcnv-ml.sif ./targetcnv.sh doctor
+```
+
 > [!NOTE]
-> The main R libraries managed by `renv` are: `GenomicRanges`, `rtracklayer`, `caret`, `caretEnsemble`, `glmnet`, `klaR`, `kernlab`, `randomForest`, `gbm`, `xgboost`, `RSNNS`, `deepnet`, `ipred`, `pROC`, `optparse`, `readxl`, `kernelshap`, `shapviz`, `NeuralNetTools`, `plotly`, `DT`, `cowplot`, `knitr`, `rmarkdown`, `dplyr`, `tidyr`, and `stringr`.
+> `TargetCNVML` includes formal `DESCRIPTION` and `NAMESPACE` files, so its 60 exported functions in `R/` can be loaded either via `source()` from the CLI scripts or as a standard R package via `pkgload::load_all(".")` / `devtools::install(".")`.
 
 ---
 
-## 2. Directory Structure & Workflow Diagram
+## 2. Directory Structure and Workflow Architecture
 
 ```text
 TargetCNV-ML/
-├── .Rprofile                    # Automatic activation of the renv virtual environment
-├── .gitignore                   # Excludes heavy binary files and raw data per Zenodo standards
-├── renv.lock                    # Dependency lockfile recording exact R package versions
-├── targetcnv.sh                 # Unified Bash CLI orchestrator for running 1-line workflows
-├── run_test_pipeline.sh         # Bash runner for the end-to-end Minimal Working Example (MWE)
-├── training_report.qmd          # Quarto template for the interactive HTML training report
-├── report_template.qmd          # Quarto template for the interactive HTML CNV inference report
-├── EXECUTION_GUIDE.md           # Step-by-step execution guide in English (this file)
-├── GUIA_EJECUCION.md            # Step-by-step execution guide in Spanish
-├── README.md                    # Main overview in English
-├── README_es.md                 # Main overview in Spanish
+├── DESCRIPTION                  # Formal R package metadata and dependencies (TargetCNVML)
+├── NAMESPACE                    # Exported package functions
+├── .Rprofile                    # Automatic activation of the isolated renv library
+├── .gitignore                   # Excludes heavy binary artifacts and local outputs
+├── renv.lock                    # Exact package lockfile validated on R 4.6.2 and Bioconductor 3.23
+├── pixi.toml                    # Reproducible Pixi manifest (R 4.6 + packages + Quarto 1.10.20)
+├── Apptainer.def                # Apptainer container definition (R 4.6.2 + Quarto 1.10.20)
+├── targetcnv.sh                 # Pipeline wrapper script in Bash for CLI execution
+├── run_test_pipeline.sh         # Automated runner for the Minimal Working Example (MWE)
+├── assets/
+│   └── report.css               # Shared CSS stylesheet for Quarto HTML reports
+├── training_report.qmd          # Read-only Quarto template for the training HTML report
+├── report_template.qmd          # Read-only Quarto template for the CNV inference HTML report
+├── transferability_report.qmd   # Read-only Quarto template for the cross-species transfer report
+├── EXECUTION_GUIDE.md           # Detailed execution guide in English (this document)
+├── GUIA_EJECUCION.md            # Detailed execution guide in Spanish
+├── README.md                    # General overview in English
+├── README_ES.md                 # General overview in Spanish
 │
-├── R/                           # Pure, modular, roxygen2-documented R library functions
-│   ├── model_specs.R            # Unified 18-model tournament specifications, XGBoost adapter & name normalizer
-│   ├── data_processing.R        # GFF intersection, dictionary classification, redundancy resolution, CNV extraction
-│   ├── model_evaluation.R       # Confusion matrices, Youden optimization, 7-model consensus, inference
-│   └── plotting.R               # ggplot2/plotly wrappers for confusion tiles, densities, benchmarks, heatmaps
+├── R/                           # Modular R functions documented with roxygen2
+│   ├── model_specs.R            # 18-model specifications, XGBoost adapter, and deterministic CV seeds
+│   ├── data_processing.R        # GFF overlap, OG/HOG reconciliation, deduplication, and CNV matrix
+│   ├── model_evaluation.R       # Youden, Spearman, 7-model consensus, CNV concordance, and transfer
+│   ├── plotting.R               # ggplot2 functions for densities, Spearman, sensitivity, and heatmaps
+│   └── report_helpers.R         # Read-only artifact loaders, DT tables, Plotly builders, and SHAP
 │
-├── scripts/                     # Production CLI executables using optparse
-│   ├── 01_prepare_data.R        # Step 1: Spatial GFF overlap and feature engineering
-│   ├── 02_train_models.R        # Step 2: 24-method tournament, k-fold CV, KernelSHAP & HTML training report
-│   └── 03_cnv_inference.R       # Step 3: Production CNV inference via 7-model consensus & HTML inference report
+├── scripts/                     # Command-line interface scripts (optparse)
+│   ├── 01_prepare_data.R        # Module 01: Spatial GFF overlap and dataset preparation
+│   ├── 02_train_models.R        # Module 02: Spearman collinearity, 24-method CV, and SHAP
+│   ├── 03_cnv_inference.R       # Module 03: CNV inference, 7-model consensus, and 30-80% sensitivity
+│   └── 04_evaluate_transferability.R # Module 04: Cross-species transferability and CNV concordance
 │
+├── tests/                       # Automated unit and integration test suite (testthat)
+│   ├── testthat.R
+│   └── testthat/
+│       ├── test-models-and-seeds.R
+│       ├── test-spatial-and-cnv.R
+│       └── test-mwe-pipeline.R
+│
+├── .github/workflows/ci.yml     # GitHub Actions Continuous Integration workflow
 ├── data/
-│   ├── reference/               # Genomic reference GFF3 annotations, homology dictionaries & sources_citations.tsv
-│   ├── CAPTUS_Muestras/         # Multi-sample CAPTUS assembly statistics
-│   └── test_data/               # Lightweight mock dataset (<25 KB) for automated testing
+│   ├── reference/               # Reference GFF3 annotations, probe dictionary, and sources_citations.tsv
+│   ├── CAPTUS_Muestras/         # Multi-sample CAPTUS extraction statistics
+│   └── test_data/               # Lightweight synthetic dataset for MWE and unit tests
 │
-├── models/                      # Pre-trained ML models, benchmark tables, SHAP objects & thresholds (.rds/.tsv)
-└── results/                     # Output CNV matrices, classification tables, and diagnostic plots
+├── models/                      # Serialized models (.rds), benchmarks (.tsv), Spearman, and SHAP
+├── results/                     # CNV matrices, 30-80% sensitivity curves, concordance, and transfer
+└── reports/                     # Unified output directory for compiled Quarto HTML reports
 ```
 
 ```mermaid
 flowchart LR
-    A["Raw CAPTUS & GFF3"] --> B["01_prepare_data.R"]
+    A["Raw CAPTUS + GFF3"] --> B["01_prepare_data.R"]
     B --> C["data_prepared.rds"]
     C --> D["02_train_models.R"]
-    D --> E["models/*.rds"]
-    D --> I["training_report.qmd"]
-    I --> J["reporte_entrenamiento.html"]
+    D --> E["models/*.rds + *.tsv"]
+    E --> I["training_report.qmd"]
+    I --> J["reports/reporte_entrenamiento.html"]
     E --> F["03_cnv_inference.R"]
-    G["New CAPTUS Data"] --> F
-    F --> H["cnv_matrix.tsv"]
-    F --> K["report_template.qmd"]
-    K --> L["reporte_inferencia.html"]
+    G["CAPTUS Samples"] --> F
+    F --> H["results/cnv_matrix.tsv"]
+    H --> K["report_template.qmd"]
+    K --> L["reports/reporte_inferencia.html"]
+    E --> M["04_evaluate_transferability.R"]
+    C --> M
+    M --> N["results/transferability_*.rds|.tsv"]
+    N --> O["transferability_report.qmd"]
+    O --> P["reports/reporte_transferencia.html"]
 ```
 
 ---
 
-## 3. CLI Command Reference
+## 3. CLI Command Reference and Safety Warnings
 
-### 3.0 Quick Execution with `targetcnv.sh`
+### 3.0 Subcommands of `./targetcnv.sh`
 
-The `./targetcnv.sh` helper script groups the most common operations into single-line subcommands:
-
-| Subcommand | Example | What it does |
+| Subcommand | Example | Purpose |
 | :--- | :--- | :--- |
-| `doctor` | `./targetcnv.sh doctor` | Checks whether `Rscript`, `quarto`, `curl`, `unzip`, `md5sum`, and all R packages are installed. |
-| `test` | `./targetcnv.sh test [--sync-root] [--no-report]` | Runs the synthetic test dataset (MWE) inside `data/test_data/`. |
-| `zenodo` | `./targetcnv.sh zenodo [--out-dir .]` | Downloads `TargetCNV_Models.zip` from Zenodo, checks its MD5 hash, and extracts `models/`. |
-| `infer` | `./targetcnv.sh infer -i stats.tsv --auto-zenodo` | Estimates the CNV matrix and HTML report on new samples; with `--auto-zenodo`, downloads the models first if `models/` is empty. |
-| `reproduce-storvum` | `./targetcnv.sh reproduce-storvum --cores 4` | Runs Steps 01, 02, and 03 from start to finish on the *Solanum torvum* dataset. |
-| `run-all` | `./targetcnv.sh run-all -g ref.gff3 -c cap.gff -s stats.tsv -d dict.xlsx -i new.tsv` | Runs `01_prepare_data.R` $\rightarrow$ `02_train_models.R` $\rightarrow$ `03_cnv_inference.R` in sequence. |
-| `prepare` | `./targetcnv.sh prepare [01 options]` | Passes all arguments directly to `scripts/01_prepare_data.R`. |
-| `train` | `./targetcnv.sh train [02 options]` | Passes all arguments directly to `scripts/02_train_models.R`. |
-| `report` | `./targetcnv.sh report [--models-dir models]` | Compiles or rebuilds the interactive HTML training report (`reporte_entrenamiento.html`) with Quarto. |
-| `snapshot` | `./targetcnv.sh snapshot` | Hydrates R packages from the system library into `renv/library` and updates `renv.lock`. |
+| `restore` / `setup` | `./targetcnv.sh restore` | Restores the project library strictly from `renv.lock` (`renv::restore(prompt = FALSE)`). |
+| `doctor` | `./targetcnv.sh doctor` | Verifies `Rscript`, `quarto`, `curl`/`wget`, `unzip`, `md5sum`, and all R packages. |
+| `test` | `./targetcnv.sh test [--no-report]` | Runs the MWE test workflow on synthetic data isolated inside `data/test_data/`. |
+| `zenodo` | `./targetcnv.sh zenodo [--out-dir .]` | Downloads `TargetCNV_Models.zip` from Zenodo, verifies MD5, and validates extracted models. |
+| `prepare` | `./targetcnv.sh prepare [01 options]` | Forwards arguments to `scripts/01_prepare_data.R`. |
+| `train` | `./targetcnv.sh train [02 options]` | Forwards arguments to `scripts/02_train_models.R`. |
+| `infer` | `./targetcnv.sh infer -i stats.tsv --auto-zenodo` | Runs `scripts/03_cnv_inference.R`; with `--auto-zenodo`, fetches Zenodo models if `models/` is empty. |
+| `transfer` | `./targetcnv.sh transfer [--sources ...]` | Runs `scripts/04_evaluate_transferability.R` and compiles `reports/reporte_transferencia.html`. |
+| `report` | `./targetcnv.sh report [--models-dir models]` | Re-renders `reports/reporte_entrenamiento.html` strictly from existing precomputed artifacts. |
+| `reproduce-storvum` | `./targetcnv.sh reproduce-storvum --cores 4` | Runs Steps `01` $\rightarrow$ `02` $\rightarrow$ `03` on the *Solanum torvum* reference dataset. |
+| `run-all` | `./targetcnv.sh run-all -g ref.gff3 -c cap.gff -s stats.tsv -d dict.xlsx -i new.tsv` | Runs `01` $\rightarrow$ `02` $\rightarrow$ `03` end-to-end on a new species dataset. |
+
+> [!WARNING]
+> **Risky or Destructive Flags and When to Use Them:**
+> 1. `--clean_models` in `02_train_models.R` (also invoked inside `./targetcnv.sh reproduce-storvum`): **permanently deletes** all existing `.rds` and `.tsv` files in `--out_models` prior to writing newly trained artifacts.
+>    - *When to use:* during a clean full re-train so stale model artifacts from earlier experiments do not remain in `models/`.
+>    - *When to avoid:* when running `--fast_tournament` or partial tests if you want to preserve previously trained 18-model artifacts in `models/`.
+> 2. `--sync-root` in `./targetcnv.sh test` or `./run_test_pipeline.sh`: **overwrites** the root `models/` and `results/` folders with synthetic MWE artifacts.
+>    - *When to use:* only in disposable container sandboxes where no real models exist.
+>    - *When to avoid:* whenever `models/` holds real trained models or Zenodo downloads.
 
 ---
 
-### 3.1 Module 01: Data Preparation (`01_prepare_data.R`)
+### 3.1 Module 01: Data Preparation and Spatial Labeling (`01_prepare_data.R`)
 
-This module identifies which CAPTUS contigs correspond to real genes in the reference genome and which ones are noise or redundant fragments:
-1. Matches the genomic coordinates of CAPTUS contigs (`protein_match:NUC`) against `gene` features in the reference `.gff3` file using `GenomicRanges` (or reads the reference gene ID directly from the GFF `Target` attribute when `--target_mode target_attr` is used for fragmented assemblies).
-2. Compares each match against the reference homology dictionary to label true matches as `TRUE_POSITIVE` and cross-homolog or off-target alignments as `FALSE_POSITIVE`.
-3. When multiple contigs map to the same reference gene as `TRUE_POSITIVE`, keeps the longest, highest-coverage contig as `TRUE_POSITIVE` and reclassifies secondary fragments as `FALSE_POSITIVE` (`5_TP_Redundante_Degradado`).
-4. Computes the quality difference of each hit relative to the best hit in the same locus (`delta_wscore` and `delta_pct_identity`).
+Builds the spatially labeled reference dataset assigning each nuclear CAPTUS contig (`protein_match:NUC`) to `TRUE_POSITIVE` or `FALSE_POSITIVE`:
+1. **Chromosome scale (`--genome_scale chromosome` / `--target_mode overlap`):** harmonizes sequence prefixes and intersects coordinates and strand (`GenomicRanges::findOverlaps`, `ignore.strand = FALSE`) between CAPTUS contigs and `gene` records in `--gff_ref`.
+2. **Contig scale (`--genome_scale contig` / `--target_mode target_attr`):** for fragmented assemblies lacking chromosome-scale GFF3 gene models, extracts target gene IDs from the CAPTUS GFF `Target` attribute and reconciles hierarchical `HOG_ID` groups with pan-genomic `OG_ID` groups via the probe-design bridge sheet.
+3. **Dictionary verification and intra-locus deduplication:** verifies locus-to-orthogroup concordance and, whenever multiple contigs overlap the same reference gene locus as positives, retains only the contig with greatest matched reference length (`ref_len_matched`) and coverage (`pct_recovered`) as `TRUE_POSITIVE`, reclassifying secondary fragments on that same locus as `FALSE_POSITIVE` (`5_TP_Redundante_Degradado`).
 
 #### Example Usage
 ```bash
-./scripts/01_prepare_data.R \
+Rscript scripts/01_prepare_data.R \
   --gff_ref data/reference/Storvum_genes.gff3 \
   --captus_gff data/reference/Storvum_hit_contigs.gff \
   --captus_stats data/reference/captus-extract_stats.tsv \
   --dict_ref data/reference/Genes_Capture_May_2026.xlsx \
   --sample Storvum \
-  --target_mode overlap \
+  --genome_scale chromosome \
   --out_dir data/
 ```
 
-#### Available Options
+#### Available Parameters
 
 | Short | Long | Type | Required | Default | Description |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| `-g` | `--gff_ref` | File | **YES**\* | *None* | Reference genome GFF/GFF3 annotation file (must contain `gene` entries). \*Required in `overlap` mode. |
-| `-c` | `--captus_gff` | File | **YES** | *None* | CAPTUS assembled contigs GFF file (`protein_match:NUC` entries). |
-| `-s` | `--captus_stats` | File | **YES** | *None* | CAPTUS `captus-extract_stats.tsv` alignment metrics table. |
-| `-d` | `--dict_ref` | File | No | `NULL` | Gene-to-orthogroup correspondence table (`.xlsx`, `.tsv`, or `.csv`) supplied by the user (direct `OG_ID` catalog or hierarchical `HOG_ID` catalog with `OG_ID <-> HOG_ID` bridge). |
-| `-p` | `--sample` | Text | No | `NULL` | Sample name to filter inside `captus_stats` (e.g., `Storvum`, `Scitrullifolium`, `S_stella`). |
-| | `--target_mode` | Text | No | `overlap` | `'overlap'`: matches coordinates against `--gff_ref`. `'target_attr'`: extracts the reference gene ID from the `Target` attribute of the CAPTUS GFF (for fragmented assemblies). |
-| `-o` | `--out_dir` | Folder | No | `data/` | Output directory where prepared files (`data_prepared.rds` and `data_prepared.tsv`) will be saved. |
-| `-h` | `--help` | Flag | No | - | Shows the help menu. |
+| `-g` | `--gff_ref` | File | Yes\* | `NULL` | Reference genome GFF/GFF3 `gene` annotation (\*required when `--genome_scale chromosome`). |
+| `-c` | `--captus_gff` | File | **Yes** | `NULL` | CAPTUS assembled contigs GFF file (`protein_match:NUC`). |
+| `-s` | `--captus_stats` | File | **Yes** | `NULL` | CAPTUS `captus-extract_stats.tsv` alignment metrics table. |
+| `-d` | `--dict_ref` | File | No | `NULL` | Homology dictionary (`.xlsx`, `.tsv`, or `.csv`) mapping reference loci to orthogroups. |
+| `-p` | `--sample` | String | No | `NULL` | Sample name to filter inside `captus-extract_stats.tsv` (e.g., `Storvum`, `Scitrullifolium`, `S_stella`). |
+| | `--genome_scale` | String | No | `chromosome` | `'chromosome'` (GFF3 coordinate overlap) or `'contig'` (`Target` attribute + `OG_ID`/`HOG_ID` bridge). |
+| | `--target_mode` | String | No | `overlap` | Technical mode alias: `'overlap'` or `'target_attr'`. |
+| | `--allow_multi_sample` | Flag | No | `FALSE` | Permits processing multi-sample tables without `--sample` filtering (used in synthetic MWE data). |
+| `-o` | `--out_dir` | Dir | No | `data/` | Output directory for `data_prepared.rds` and `data_prepared.tsv`. |
 
 ---
 
-### 3.2 Module 02: Model Training & Evaluation (`02_train_models.R`)
+### 3.2 Module 02: Collinearity, Deterministic CV Training, and SHAP (`02_train_models.R`)
 
-Using the labeled dataset from Step 1, this module trains and compares **24 classification methods** to separate real homologs (`TP`) from noise (`FP`):
-1. **Univariate Youden cutoffs (4 methods):** For each of the 4 continuous metrics (`pct_recovered`, `pct_identity`, `score`, `wscore`), finds the cutoff that maximizes Youden's $J$ statistic ($\text{Sensitivity} + \text{Specificity} - 1$).
-2. **Weighted heuristic model (`Weighted_Heuristic`):** Tests integer weight combinations (0 to 3) across the 4 binary Youden votes to find the weighted sum that maximizes the area under the ROC curve (AUC).
-3. **Full Machine Learning Tournament (`caret`, 18 classifiers + `Ensamble_Stacking`):** Trains by default all 18 supervised algorithms (`RandomForest`, `GBM`, `XGBoost`, `SVM_Radial`, `SVM_Lineal`, `SVM_Polinomial`, `Red_Neuronal`, `Red_Neuronal_Bag`, `ElasticNet`, `KNN`, `CART`, `NaiveBayes`, `LDA`, `MLP`, `MLP_Regularizado`, `QDA`, `Bagging_Arboles`, `Stacked Autoencoder - DNN`) plus the GLM `caretStack` meta-model (`Ensamble_Stacking`) under two cross-validation scenarios:
-   - **Balanced:** Balances `TP` and `FP` counts inside each fold using down-sampling.
-   - **Unbalanced:** Trains on the original class proportions without resampling.
-4. **Explainability (KernelSHAP) & Interactive Report (`reporte_entrenamiento.html`):** Computes KernelSHAP values on `ElasticNet` and compiles the interactive HTML training report.
+Starting from `data_prepared.rds`, evaluates predictor dependencies and benchmarks **24 classification methods** across the four continuous CAPTUS metrics (`pct_recovered`, `pct_identity`, `score`, `wscore`):
+1. **Spearman rank collinearity test:** computes pairwise $\rho$ correlations and $p$-values, exporting `models/spearman_collinearity.tsv` and `models/spearman_collinearity.rds` (rendered as a heatmap in `reporte_entrenamiento.html`). On *S. torvum*, this confirms near-collinearity between `score` and `wscore` ($\rho = 0.9977$) versus moderate coupling between `pct_recovered` and `pct_identity` ($\rho = 0.7776$).
+2. **Univariate Youden cutoffs (4 methods) and weighted heuristic ensemble (`Weighted_Heuristic`):** finds the threshold maximizing Youden's $J = \text{Sensitivity} + \text{Specificity} - 1$ for each variable and performs an integer grid search ($0\text{--}3$) for the highest-AUC weighted vote combination.
+3. **Deterministic cross-validation across 18 supervised classifiers and `Ensamble_Stacking`:** builds stratified folds and passes an explicit `seeds` list to `caret::trainControl()` derived from `--seed`, guaranteeing **bit-for-bit identical models regardless of `--cores`**. Includes a native adapter compatible with `xgboost >= 3.x` and out-of-fold probability extraction for `Ensamble_Stacking`. Evaluates two regimes:
+   - **Balanced:** stratified within-fold down-sampling (`down`).
+   - **Unbalanced:** natural class proportions.
+4. **KernelSHAP attributions and read-only Quarto rendering:** saves `shap_values_balanced.rds`, `shap_values_unbalanced.rds`, and `consensus_spec.rds`, then renders `reports/reporte_entrenamiento.html`.
 
 #### Example Usage
 ```bash
-./scripts/02_train_models.R \
+Rscript scripts/02_train_models.R \
   --data data/data_prepared.rds \
   --out_models models/ \
   --cv_folds 5 \
   --sampling down \
   --cores 4 \
   --seed 1234 \
-  --report_file reporte_entrenamiento.html
+  --sources data/reference/sources_citations.tsv \
+  --report_file reports/reporte_entrenamiento.html
 ```
 
-#### Available Options
+#### Available Parameters
 
 | Short | Long | Type | Required | Default | Description |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| `-d` | `--data` | File | **YES** | `data/data_prepared.rds` | Prepared dataset file (`.rds` or `.tsv`) generated in Step 1. |
-| `-m` | `--out_models` | Folder | No | `models/` | Folder where `.rds` models and `.tsv` benchmark tables will be saved. |
-| `-k` | `--cv_folds` | Integer | No | `5` | Number of cross-validation folds ($\ge 2$). |
-| `-s` | `--sampling` | Text | No | `down` | Class-balancing method for the balanced scenario: `'down'` (down-sampling), `'up'` (up-sampling), or `'none'`. |
-| `-c` | `--cores` | Integer | No | `detectCores() - 1` | Number of CPU cores used for parallel training. |
-| | `--seed` | Integer | No | `1234` | Random seed for reproducible results. |
-| | `--extended_tournament` | Flag | No | `TRUE` | Trains all 18 supervised classifiers from the full tournament. |
-| | `--fast_tournament` | Flag | No | - | Trains only the 5 fast core classifiers (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`, `LDA`). |
-| | `--train_stacking` | Flag | No | `TRUE` | Fits the GLM stacking meta-model (`Ensamble_Stacking` via `caretStack`). |
-| | `--no_stacking` | Flag | No | - | Skips training the `Ensamble_Stacking` meta-model. |
-| | `--clean_models` | Flag | No | `FALSE` | Removes previous `.rds`/`.tsv` files in `--out_models` before saving. |
-| | `--include_hit` | Flag | No | `FALSE` | Adds the `hit` column as a predictor. *(Off by default to keep compatibility with `03_cnv_inference.R`).* |
-| | `--render_report` | Flag | No | `TRUE` | Automatically compiles the HTML report when training finishes. |
-| | `--no_render_report` | Flag | No | - | Skips HTML report generation (useful on servers without Quarto). |
-| `-r` | `--report_file` | File | No | `reporte_entrenamiento.html` | Output path and filename for the HTML training report. |
-| | `--sources` | File | No | `""` | Optional TSV file (`data/reference/sources_citations.tsv`) with genomic and publication citations to insert into the HTML report (if omitted, only the origin file is shown). |
-| `-h` | `--help` | Flag | No | - | Shows the help menu. |
+| `-d` | `--data` | File | **Yes** | `data/data_prepared.rds` | Labeled dataset (`.rds` or `.tsv`) generated by Module 01. |
+| `-m` | `--out_models` | Dir | No | `models/` | Output folder for `.rds` models, `.tsv` benchmarks, and SHAP objects. |
+| `-k` | `--cv_folds` | Integer | No | `5` | Number of stratified cross-validation folds ($\ge 2$). |
+| `-s` | `--sampling` | String | No | `down` | Class balancing scheme for the balanced scenario: `'down'`, `'up'`, or `'none'`. |
+| `-c` | `--cores` | Integer | No | `detectCores() - 1` | Number of parallel PSOCK worker processes. |
+| | `--seed` | Integer | No | `1234` | Master random seed governing CV folds, tuning grids, and per-fold `seeds`. |
+| | `--extended_tournament` / `--fast_tournament` | Flag | No | `TRUE` | Train all 18 ML algorithms (default) or the 5-model fast subset (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`, `LDA`). |
+| | `--train_stacking` / `--no_stacking` | Flag | No | `TRUE` | Fit (default) or skip the GLM `Ensamble_Stacking` meta-learner. |
+| | `--clean_models` | Flag | No | `FALSE` | **Destructive:** deletes existing `.rds` and `.tsv` files in `--out_models` before saving. |
+| | `--include_hit` | Flag | No | `FALSE` | Adds CAPTUS integer hit rank `hit` as a predictor. `consensus_spec.rds` automatically records active predictors for `03_cnv_inference.R`, though leaving this `FALSE` is recommended when inferring across datasets with varying assembly depth. |
+| | `--render_report` / `--no_render_report` | Flag | No | `TRUE` | Compile (default) or skip `reports/reporte_entrenamiento.html`. |
+| `-r` | `--report_file` | File | No | `reports/reporte_entrenamiento.html` | Output HTML report path. |
+| | `--sources` | File | No | `""` | Optional TSV containing genome and publication citations (`data/reference/sources_citations.tsv`). |
 
-#### Metrics Included in the Benchmark Tables (16 Columns)
+#### Benchmark Output Columns (16 Columns)
+`benchmark_models_balanced.tsv`, `benchmark_models_unbalanced.tsv`, `youden_benchmark.tsv`, and transferability tables share 16 columns:
+`Modelo`, `Exactitud`, `Exactitud_Balanceada`, `Sensibilidad`, `Especificidad`, `Precision`, `VPN`, `FDR`, `F1_Score`, `MCC`, `Kappa`, `ROC_AUC`, `TP`, `FP`, `FN`, `TN`.
 
-All benchmark tables (`benchmark_models_balanced.tsv`, `benchmark_models_unbalanced.tsv`, `youden_benchmark.tsv`, and `benchmark_models_all.tsv`) share the same 16 columns:
-1. `Modelo`: Name of the classifier or cutoff rule.
-2. `Exactitud` (*Accuracy*): $\frac{TP + TN}{TP + FP + FN + TN}$.
-3. `Exactitud_Balanceada` (*Balanced Accuracy*): $\frac{\text{Sensitivity} + \text{Specificity}}{2}$.
-4. `Sensibilidad` (*Recall*): $\frac{TP}{TP + FN}$.
-5. `Especificidad`: $\frac{TN}{TN + FP}$.
-6. `Precision` (*Positive Predictive Value*): $\frac{TP}{TP + FP}$.
-7. `VPN` (*Negative Predictive Value*): $\frac{TN}{TN + FN}$.
-8. `FDR` (*False Discovery Rate*): $1 - \text{Precision} = \frac{FP}{TP + FP}$.
-9. `F1_Score`: $2 \times \frac{\text{Precision} \times \text{Sensitivity}}{\text{Precision} + \text{Sensitivity}}$.
-10. `MCC` (*Matthews Correlation Coefficient*).
-11. `Kappa`: Cohen's Kappa agreement score.
-12. `ROC_AUC`: Area under the ROC curve.
-13. `TP`, `FP`, `FN`, `TN`: Confusion matrix integer counts.
-
-> [!TIP]
-> **Cross-scenario asterisk (`*`) indicator in the HTML report:** In the collapsible interactive tables of `reporte_entrenamiento.html`, models marked with **`*`** in the `Modelo` column (and detailed in `Mejor_Version_FDR`) are those whose alternative version (*Balanced* vs. *Unbalanced*) achieves a superior global score with strong weighting on False Discovery Rate ($\text{FDR}$) control:
-> $$\text{Global Index}_{\text{FDR}} = 0.45(1 - \text{FDR}) + 0.20\,\text{F1} + 0.15\,\text{MCC} + 0.10\,\text{Balanced Acc.} + 0.10\,\text{ROC-AUC}$$
+In HTML tables, an asterisk (`*`) next to `Modelo` indicates that the classifier achieves a stronger FDR-weighted composite score under its alternative regime (*Balanced* vs. *Unbalanced*):
+$$\text{Composite Score}_{\text{FDR}} = 0.45(1 - \text{FDR}) + 0.20\,\text{F1} + 0.15\,\text{MCC} + 0.10\,\text{Balanced Acc.} + 0.10\,\text{ROC-AUC}$$
 
 ---
 
-### 3.3 Module 03: CNV Inference & Consensus (`03_cnv_inference.R`)
+### 3.3 Module 03: CNV Inference and Coverage Threshold Sensitivity (`03_cnv_inference.R`)
 
-This module takes a CAPTUS statistics table from new samples, removes assembly noise by combining 7 models, and estimates gene copy numbers per locus and sample:
-
-1. **7-Model consensus vote:** Each sequence is evaluated by 7 methods:
-   - 4 Machine Learning classifiers (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`).
-   - 2 univariate Youden cutoffs (`pct_recovered` and `pct_identity`).
-   - 1 weighted heuristic model (`Weighted_Heuristic`).
-   If a sequence receives **4 or more positive votes** (`--min_votes 4`), it is accepted as `Homologo_Valido`; otherwise it is discarded as `Ruido_Descartado`.
-
-2. **Single-threshold coverage rule for homolog determination:** To reduce the risk that a single gene split across multiple contigs is counted as multiple copies, sequences accepted as `Homologo_Valido` are sorted from highest to lowest coverage (`pct_recovered`) within each sample and locus, and classified with a single-threshold rule:
-   - **`Copia_Principal`:** First sequence (highest coverage) of the locus in the sample. Always counted as evidence of locus presence, without a coverage threshold.
-   - **`Homologo_Confirmado`:** Additional sequence with individual coverage $\ge 50\%$ (`--cov_threshold 50.0`). Counted as an additional gene copy in the CNV matrix.
-   - **`No_Contado`:** Additional sequence with individual coverage $< 50\%$. Not counted, because a short fragment alone cannot distinguish between a portion of the primary copy split by the assembler and an incomplete additional copy.
-   The estimated copy number per locus and sample in `cnv_matrix.tsv` is `Copia_Principal + Homologo_Confirmado`.
+Estimates the orthogroup-by-sample copy-number matrix on target-capture assemblies:
+1. **7-model consensus voting:** combines 4 supervised classifiers (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`, or those recorded in `consensus_spec.rds`), 2 Youden cutoffs (`pct_recovered`, `pct_identity`), and `Weighted_Heuristic`. Sequences accumulating $\ge 4/7$ votes (`--min_votes 4`) are accepted as `Homologo_Valido`; all others are filtered out as `Ruido_Descartado`.
+2. **Single-threshold coverage counting (`--cov_threshold`):** within each sample and orthogroup, `Homologo_Valido` sequences are ordered by descending `pct_recovered`:
+   - `Copia_Principal`: highest-coverage sequence in that orthogroup and sample (always counted as locus presence).
+   - `Homologo_Confirmado`: secondary sequence with `pct_recovered >= --cov_threshold` (default `50.0%`), counted as an additional gene copy.
+   - `No_Contado`: secondary sequence with `pct_recovered < --cov_threshold`, excluded to prevent split fragments from inflating copy counts.
+3. **Empirical threshold sensitivity curve (`30%` to `80%`) and orthogroup concordance:** sweeps `--cov_threshold` from `30%` to `80%` (comparing against $\text{CNV}^{\text{real}}_{\text{OG}}$ whenever `Validacion_Espacial` or `--true_cnv` is supplied) and writes `cnv_threshold_sensitivity.tsv`.
 
 > [!NOTE]
-> **Interpretation Note:** The 50% threshold is an empirically uncalibrated heuristic and directly determines the CNV matrix. The rule is conservative: it may underestimate copy number when an additional copy is only recovered in fragments shorter than 50%, and it may overestimate copy number if a single copy is split into two contigs that each exceed 50% coverage. CNV results should be interpreted keeping this assumption in mind.
+> **Methodological Scope of the Coverage Rule:** The `30%–80%` sensitivity sweep provides empirical calibration of the `50%` threshold against known reference copy counts. Because `captus-extract_stats.tsv` summarizes percentage target recovery without per-fragment alignment coordinates across the probe, the rule remains conservative for genuine secondary copies recovered below `50%` and could still over-count if two non-overlapping fragments of a single gene each exceed `50%` of the reference length.
 
 #### Example Usage
 ```bash
-./scripts/03_cnv_inference.R \
+Rscript scripts/03_cnv_inference.R \
   --input data/CAPTUS_Muestras/captus-extract_stats.tsv \
   --models_dir models/ \
   --out_dir results/ \
   --cov_threshold 50.0 \
   --min_votes 4 \
-  --top_loci 30
+  --top_loci 30 \
+  --sources data/reference/sources_citations.tsv
 ```
 
-#### Available Options
+#### Available Parameters
 
 | Short | Long | Type | Required | Default | Description |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| `-i` | `--input` | File | **YES** | *None* | Input `.tsv`, `.csv`, or `.rds` file with CAPTUS metrics for the samples to analyze. |
-| `-m` | `--models_dir` | Folder | No | `models/` | Folder containing the `.rds` model and threshold files. |
-| `-o` | `--out_dir` | Folder | No | `results/` | Output folder for CNV tables, plots, and the HTML inference report. |
-| `-c` | `--cov_threshold` | Double | No | `50.0` | Minimum individual coverage (`pct_recovered` in %) required to confirm an additional copy (`Homologo_Confirmado`). |
-| `-v` | `--min_votes` | Integer | No | `4` | Minimum positive votes (out of 7) required to accept a sequence as `Homologo_Valido`. |
-| `-t` | `--top_loci` | Integer | No | `30` | Number of top loci with the highest copy counts to show in the heatmap. |
-| | `--render_report` / `--no_render_report` | Flag | No | `TRUE` | Automatically compiles (default) or skips the interactive HTML inference report `reporte_inferencia.html`. |
-| `-r` | `--report_file` | File | No | `reporte_inferencia.html` | Output filename for the HTML inference report inside `--out_dir`. |
-| | `--sources` | File | No | `""` | Optional TSV file (`data/reference/sources_citations.tsv`) with genomic and publication citations to insert into the HTML report (if omitted, only the origin file is shown). |
-| `-h` | `--help` | Flag | No | - | Shows the help menu. |
+| `-i` | `--input` | File | **Yes** | `NULL` | `.tsv`, `.csv`, or `.rds` table of CAPTUS extraction statistics. |
+| `-m` | `--models_dir` | Dir | No | `models/` | Folder holding trained `.rds` artifacts. |
+| `-o` | `--out_dir` | Dir | No | `results/` | Destination folder for CNV matrices, sensitivity tables, and plots. |
+| `-c` | `--cov_threshold` | Float | No | `50.0` | Minimum `pct_recovered` (%) required to count secondary hits as `Homologo_Confirmado`. |
+| `-v` | `--min_votes` | Integer | No | `4` | Minimum positive votes (out of 7) required for `Homologo_Valido`. |
+| `-t` | `--top_loci` | Integer | No | `30` | Number of highest-copy orthogroups displayed in the CNV heatmap. |
+| | `--true_cnv` | File | No | `""` | Optional reference copy-number matrix/table ($\text{CNV}^{\text{real}}_{\text{OG}}$) for concordance metrics. |
+| | `--render_report` / `--no_render_report` | Flag | No | `TRUE` | Compile (default) or skip `reports/reporte_inferencia.html`. |
+| `-r` | `--report_file` | File | No | `reports/reporte_inferencia.html` | Output HTML report path. |
+| | `--sources` | File | No | `""` | Optional TSV with genome and literature citations (`data/reference/sources_citations.tsv`). |
 
-#### Output Files in `<out_dir>/`
-- `cnv_matrix.tsv`: Gene copy number matrix (`Copia_Principal + Homologo_Confirmado`, rows: loci/orthogroups, columns: samples).
-- `cnv_annotated_sequences.tsv`: Table of all valid sequences showing their copy category (`Copia_Principal`, `Homologo_Confirmado`, or `No_Contado`).
-- `functional_genes_catalog.tsv`: Filtered list containing only confirmed functional copies (`Copia_Principal` and `Homologo_Confirmado`).
-- `consensus_verdicts.tsv`: Full table showing the individual votes of all 7 models for every evaluated sequence.
-- `transferability_benchmark.tsv`: *(Generated automatically when `--input` contains `Validacion_Espacial`)* Classification metrics when applying the models to another species.
-- `plot_consensus_distribution.pdf` & `.png`: Bar plot showing accepted versus discarded sequences.
-- `plot_cnv_heatmap.pdf` & `.png`: Heatmap of copy numbers across the most variable loci.
-- `reporte_inferencia.html`: Interactive Quarto report displaying the consensus vote breakdown, interactive heatmap, and exportable CNV matrices.
+#### Output Files in `<out_dir>/` and `reports/`
+- `cnv_matrix.tsv`: `Locus_Ortogrupo x Sample` matrix reporting `Copia_Principal + Homologo_Confirmado`.
+- `cnv_annotated_sequences.tsv`: all validated homologs labeled with copy category.
+- `functional_genes_catalog.tsv`: filtered catalog of counted copies (`Copia_Principal` and `Homologo_Confirmado`).
+- `consensus_verdicts.tsv`: per-sequence vote breakdown across all 7 voters.
+- `cnv_threshold_sensitivity.tsv` and `plot_cnv_threshold_sensitivity.pdf`/`.png`: `30%–80%` threshold sensitivity curve.
+- `cnv_concordance_summary.tsv` and `cnv_concordance_pairs.tsv`: *(when spatial labels or `--true_cnv` are present)* orthogroup copy-number concordance (Spearman's $\rho$, quadratic weighted Kappa, RMSE, and exact concordance).
+- `plot_consensus_distribution.pdf`/`.png`, `plot_cnv_heatmap.pdf`/`.png` (in `<out_dir>/`), and `reports/reporte_inferencia.html`.
 
 ---
 
-### 3.4 Manual Compilation of the Quarto HTML Reports
+### 3.4 Module 04: Cross-Species Transferability Evaluation (`04_evaluate_transferability.R`)
 
-- **Training Report (`training_report.qmd` $\rightarrow$ `reporte_entrenamiento.html`):**
-  ```bash
-  # In one line with targetcnv.sh:
-  ./targetcnv.sh report
+Executes all cross-species transferability and copy-number concordance calculations outside Quarto:
+1. Applies all 24 pre-trained donor methods (*S. torvum*) plus the 7-model consensus without re-training onto recipient species (*S. citrullifolium* at chromosome scale and *S. stellatiglandulosum* at contig scale).
+2. Evaluates orthogroup-level copy-number concordance ($\widehat{\text{CNV}}_{\text{OG}}$ vs. $\text{CNV}^{\text{real}}_{\text{OG}}$) using Spearman's $\rho$, quadratic weighted Kappa ($\kappa_w$), RMSE, MAE, and exact copy-number agreement rate.
+3. Sweeps `--cov_threshold` across `30%–80%` per species, writes `results/transferability_*.tsv` and `results/transferability_results.rds`, and compiles `transferability_report.qmd` in read-only mode.
 
-  # Or directly with Quarto:
-  quarto render training_report.qmd \
-    -P project_root:"." \
-    -P models_dir:"models" \
-    -P data_file:"data/data_prepared.rds" \
-    --output "reporte_entrenamiento.html"
-  ```
-- **Inference Report (`report_template.qmd` $\rightarrow$ `results/reporte_inferencia.html`):**
-  ```bash
-  quarto render report_template.qmd \
-    -P consensus_verdicts:"results/consensus_verdicts.tsv" \
-    -P cnv_matrix:"results/cnv_matrix.tsv" \
-    -P cnv_annotated:"results/cnv_annotated_sequences.tsv" \
-    -P sources_file:"data/reference/sources_citations.tsv" \
-    -P top_loci:30 \
-    --output "reporte_inferencia.html"
-  ```
-- **Phylogenetic Transferability Report (`transferability_report.qmd` $\rightarrow$ `reporte_transferencia.html`):**
-  ```bash
-  ./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
-  ```
-  *(Note: In all reports, if `--sources` / `-P sources_file` is supplied, the genomic repository and publication citations from `sources_citations.tsv` are inserted; if omitted, nothing related to external citations is shown and only the origin filename is displayed).*
+```bash
+# Recommended wrapper command:
+./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
+
+# Direct Rscript invocation:
+Rscript scripts/04_evaluate_transferability.R \
+  --models_dir models/ \
+  --donor_data data/data_prepared.rds \
+  --cit_data data/citrullifolium/data_prepared.rds \
+  --ste_data data/stellatiglandulosum/data_prepared.rds \
+  --dict_ref data/reference/Genes_Capture_May_2026.xlsx \
+  --cov_threshold 50.0 \
+  --min_votes 4 \
+  --out_dir results/ \
+  --sources data/reference/sources_citations.tsv \
+  --report_file reports/reporte_transferencia.html
+```
+
+---
+
+### 3.5 Manual Re-rendering of Read-Only Quarto Reports
+
+All three `.qmd` templates strictly read precomputed `.rds` and `.tsv` files; if `models/` is missing trained artifacts, they display an instruction to run `./targetcnv.sh train`. All compiled HTML reports are grouped under `reports/`.
+
+```bash
+# 1. Training report (reports/reporte_entrenamiento.html)
+./targetcnv.sh report
+
+# 2. CNV inference report (reports/reporte_inferencia.html)
+quarto render report_template.qmd \
+  -P consensus_verdicts:"results/consensus_verdicts.tsv" \
+  -P cnv_matrix:"results/cnv_matrix.tsv" \
+  -P cnv_annotated:"results/cnv_annotated_sequences.tsv" \
+  -P cnv_sensitivity:"results/cnv_threshold_sensitivity.tsv" \
+  -P sources_file:"data/reference/sources_citations.tsv" \
+  -P top_loci:30 \
+  --output "reporte_inferencia.html" && mv -f reporte_inferencia.html reports/
+
+# 3. Cross-species transferability report (reports/reporte_transferencia.html)
+./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
+```
 
 ---
 
 ## 4. Workflow 1: Quick Test with Synthetic Data (MWE)
 
-The repository includes a lightweight synthetic dataset in `data/test_data/` so you can verify your installation in seconds:
+To verify both unit-level mathematical invariants and full CLI script execution:
 
 ```bash
+# Formal unit and integration test suite (testthat)
+Rscript tests/testthat.R
+
+# End-to-end MWE execution including Quarto HTML report rendering inside reports/
 ./targetcnv.sh test
-# Equivalent to: ./run_test_pipeline.sh
 ```
 
-This command runs all three steps in isolation (without overwriting root `models/` or `results/`):
-1. `01_prepare_data.R` on `data/test_data/mock_*.gff3`, saving to `data/test_data/prepared/`.
-2. `02_train_models.R` using 3-fold cross-validation, saving to `data/test_data/models/` and generating `data/test_data/reporte_entrenamiento_test.html`.
-3. `03_cnv_inference.R` on `data/test_data/mock_captus_extract.tsv`, saving the CNV matrix, plots, and `reporte_inferencia.html` in `data/test_data/results/`.
+`tests/testthat.R` automatically verifies:
+- Spatial GFF overlap respecting harmonized sequence names, strand, and intra-locus redundancy resolution without legacy columns.
+- Bit-for-bit identical CV training via `build_deterministic_cv_control()` between sequential (`1` core) and parallel (`2` PSOCK cores) execution.
+- Valid `XGBoost` training/probability prediction and `ROC_AUC > 0.5` in `Ensamble_Stacking`.
+- Exact boundary copy counting in `extract_cnv_matrix()` (0 valid sequences, primary copy $< 50\%$, exact `50.0%` vs. `49.99%` boundary, and `0`-copy sample padding).
+- Isolated end-to-end execution of `01` $\rightarrow$ `02` $\rightarrow$ `03` in a temporary directory.
 
 ---
 
-## 5. Workflow 2: Downloading, Using & Updating Models on Zenodo
+## 5. Workflow 2: Downloading, Using, and Updating Models on Zenodo
 
-The models trained on the *Solanum torvum* reference genome are archived on Zenodo:
-- **DOI:** [10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987)
-- **File:** `TargetCNV_Models.zip`
+Pre-trained *Solanum torvum* artifacts are archived on Zenodo ([DOI: 10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987), archive `TargetCNV_Models.zip`).
 
-### 5.1 Automatic Download & Inference in 1 Line
+### 5.1 Verified Download and Inference
 ```bash
-# If models/ is empty, downloads the zip from Zenodo, checks the MD5 hash, and runs inference:
+# Downloads with retry/timeout guards, checks MD5 (removes .zip on mismatch), and verifies 18 ML models + consensus_spec.rds:
+./targetcnv.sh zenodo
+
+# Automatic inference fetching Zenodo models if models/ is empty:
 ./targetcnv.sh infer -i data/CAPTUS_Muestras/captus-extract_stats.tsv --auto-zenodo
 ```
 
-### 5.2 Step-by-Step Download & Inference
-```bash
-./targetcnv.sh zenodo
-./scripts/03_cnv_inference.R \
-  --input data/CAPTUS_Muestras/captus-extract_stats.tsv \
-  --models_dir models \
-  --out_dir results \
-  --cov_threshold 50.0 \
-  --min_votes 4 \
-  --top_loci 30
-```
+### 5.2 Publishing an Updated `TargetCNV_Models.zip` Release on Zenodo
 
-### 5.3 How to Update `TargetCNV_Models.zip` on Zenodo
+After training all 24 methods (including `XGBoost`, `Ensamble_Stacking`, `spearman_collinearity.*`, and `consensus_spec.rds`):
 
-If you want to publish a new version of `TargetCNV_Models.zip` on Zenodo containing all 24 evaluated models (`models_balanced.rds`, `models_unbalanced.rds`, individual `.rds` models, and `benchmark_models_*.rds`/`.tsv`):
-
-1. **Package the `models/` directory and compute its new MD5 hash:**
+1. **Verify required artifacts in `models/` and build the archive:**
    ```bash
+   ls -1 models/consensus_spec.rds models/models_balanced.rds models/models_unbalanced.rds
    zip -r TargetCNV_Models.zip models/
    md5sum TargetCNV_Models.zip
    ```
-2. **Upload the new version on Zenodo:**
-   - Open your Zenodo record ([https://zenodo.org/records/23463987](https://doi.org/10.5281/zenodo.23463987)) and click **"New version"**.
-   - Delete the old `TargetCNV_Models.zip` in the draft, upload the newly created `TargetCNV_Models.zip`, update the version tag (e.g., `v1.1.0`), and click **"Publish"**.
-3. **Update `targetcnv.sh` with the new record ID and MD5 hash:**
-   - Copy the new `record_id` assigned by Zenodo and the MD5 hash from `md5sum TargetCNV_Models.zip`, and update lines 22–24 in `targetcnv.sh`:
-     ```bash
-     ZENODO_URL="https://zenodo.org/api/records/<NEW_RECORD_ID>/files/TargetCNV_Models.zip/content"
-     ZENODO_ZIP="TargetCNV_Models.zip"
-     ZENODO_MD5="<NEW_MD5_HASH>"
-     ```
+2. **Create a new Zenodo version:**
+   - Open [https://doi.org/10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987) and click **"New version"**.
+   - Replace `TargetCNV_Models.zip`, update the version tag to `v1.1.0`, and publish.
+3. **Update `ZENODO_URL` and `ZENODO_MD5` in `targetcnv.sh`:**
+   ```bash
+   ZENODO_URL="https://zenodo.org/api/records/<NEW_RECORD_ID>/files/TargetCNV_Models.zip/content"
+   ZENODO_ZIP="TargetCNV_Models.zip"
+   ZENODO_MD5="<NEW_MD5_HASH>"
+   ```
 
 ---
 
-## 6. Workflow 3: Training on New Data & Cross-Species Transferability
+## 6. Workflow 3: New Data and Cross-Species Transferability
 
-### 6.1 Train and Predict on a New Species in 1 Line
+### 6.1 End-to-End Training and Inference on a New Species
 ```bash
 ./targetcnv.sh run-all \
   -g path/to/new_genome.gff3 \
   -c path/to/new_captus_contigs.gff \
   -s path/to/captus-extract_stats.tsv \
-  -d path/to/orthology_dictionary.xlsx \
-  -p ReferenceSampleName \
+  -d path/to/homology_dictionary.xlsx \
+  -p ReferenceSample \
   -i path/to/population_captus_stats.tsv \
   --out_data data/new_species \
   -m models/new_species \
   -o results/new_species \
-  -r training_report_new_species.html
+  -r reports/training_report_new_species.html
 ```
 
-### 6.2 Cross-Species Transferability Tests (*S. citrullifolium* & *S. stellatiglandulosum*)
+### 6.2 Cross-Species Transferability Evaluation (*S. citrullifolium* and *S. stellatiglandulosum*)
 
-- **Chromosome-scale reference genomes (*S. torvum* and *S. citrullifolium*):** Assemblies and `.gff3` annotations are reported and published at the **Solanum Pan-Genomics** portal ([https://solpangenomics.com/dist/pages/downloads/index.php](https://solpangenomics.com/dist/pages/downloads/index.php)), the **Solanaceae Genomics Network (SGN)** ([https://solgenomics.net/ftp/genomes/Solanum_pangenomics/](https://solgenomics.net/ftp/genomes/Solanum_pangenomics/)), and **NCBI BioProject `PRJNA1073673`** ([https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673](https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673)). Homologous gene and orthogroup (`OG_ID`) data come from: **Benoit, M. *et al.*:**, 2025; *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*; **Nature**; 640 (8057): 135--145; [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
-- **Contig-scale reference genome (*S. stellatiglandulosum*):** Genome assembly reported in **NCBI BioProject** ([https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D](https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D)) under **Accession: `PRJNA1070281` (ID: `1070281`)** by the **Grupo de Genómica evolutiva del metabolismo especializado de la Universidad Nacional de Colombia**. Homologous gene and hierarchical orthogroup (`HOG_ID`) data come from: **Pérez-Mesa, P. A. & Roda, F.:**, 2025; *Alkaloid evolution in the solanaceae*; **Current Opinion in Plant Biology**; 85: 102727; [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); and **Pérez-Mesa, P. A.; Pardo, R. A.; Alseekh, S. *et al.*:**, 2026; *Genetic basis of alkaloid divergence in the solanaceae*; **Plant Molecular Biology**; 116: 67; [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
-
-#### Case A: Chromosome-Level Assembly (*Solanum citrullifolium*)
 ```bash
-./scripts/01_prepare_data.R \
-  --gff_ref path/to/Scitrullifolium_genes.gff3 \
-  --captus_gff path/to/Scitrullifolium_hit_contigs.gff \
-  --captus_stats path/to/captus-extract_stats.tsv \
+# 1. Prepare chromosome-scale recipient species (S. citrullifolium: 171 NUC sequences, 56 TP / 115 FP)
+Rscript scripts/01_prepare_data.R \
+  --gff_ref data/reference/Scitrullifolium_genes.gff3 \
+  --captus_gff data/reference/Scitrullifolium_hit_contigs.gff \
+  --captus_stats data/reference/captus-extract_stats.tsv \
   --dict_ref data/reference/Genes_Capture_May_2026.xlsx \
   --sample Scitrullifolium \
+  --genome_scale chromosome \
   --out_dir data/citrullifolium/
 
-./scripts/03_cnv_inference.R \
-  --input data/citrullifolium/data_prepared.rds \
-  --models_dir models/ \
-  --out_dir results/citrullifolium/
-```
-
-#### Case B: Highly Fragmented Assembly (*Solanum stellatiglandulosum*, HOG $\leftrightarrow$ OG Bridge & `Target` Attribute)
-```bash
-./scripts/01_prepare_data.R \
-  --captus_gff path/to/S_stella_hit_contigs.gff \
-  --captus_stats path/to/captus-extract_stats.tsv \
+# 2. Prepare contig-scale recipient species (S. stellatiglandulosum: 200 NUC sequences, 19 TP / 181 FP)
+Rscript scripts/01_prepare_data.R \
+  --captus_gff data/reference/S_stella_hit_contigs.gff \
+  --captus_stats data/reference/captus-extract_stats.tsv \
   --dict_ref data/reference/Genes_Capture_May_2026.xlsx \
   --sample S_stella \
-  --target_mode target_attr \
+  --genome_scale contig \
   --out_dir data/stellatiglandulosum/
 
-./scripts/03_cnv_inference.R \
-  --input data/stellatiglandulosum/data_prepared.rds \
-  --models_dir models/ \
-  --out_dir results/stellatiglandulosum/
+# 3. Evaluate all 24 methods, orthogroup CNV concordance, 30%-80% calibration curve, and HTML report
+./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
 ```
+
+#### Orthogroup-Level Copy-Number Concordance Summary (`--cov_threshold 50.0%`, 7-Model Consensus)
+
+| Species | Genome Scale | Orthogroups ($N$) | Reference Copies | Estimated Copies | Exact Concordance (%) | Spearman's $\rho$ | Quadratic $\kappa_w$ | RMSE |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| ***S. torvum*** (Donor) | Chromosome Scale | 58 | 87 | 79 | **79.31** | **0.5983** ($p = 7.0 \times 10^{-7}$) | **0.5269** | 0.8710 |
+| ***S. citrullifolium*** | Chromosome Scale | 55 | 56 | 66 | **70.91** | **0.4653** ($p = 3.4 \times 10^{-4}$) | **0.5506** | 0.5394 |
+| ***S. stellatiglandulosum*** | Contig Scale | 58 | 19 | 78 | 24.14 | 0.0831 ($p = 0.535$) | 0.0742 | 1.3834 |
 
 ---
 
 ## 7. Workflow 4: Reproducing the Reference Experiment (*Solanum torvum*)
 
-### In 1 Single Line
 ```bash
 ./targetcnv.sh reproduce-storvum --cores 4
 ```
 
-### Key Cross-Validation Results (K=5, Seed 1234)
+### Deterministic Cross-Validation Results ($K = 5$, `--seed 1234`, $N = 184$: $87\text{ TP}$ vs. $97\text{ FP}$)
 
-#### Balanced Scenario (*Down-Sampling*)
+#### Balanced Scenario (*Down-Sampling*) — Representative Classifiers
 | Model | Balanced Acc. (%) | Sensitivity (%) | Specificity (%) | Precision (%) | FDR (%) | F1 Score | MCC | Kappa | ROC-AUC |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Weighted_Heuristic** | 88.86 | 83.91 | 93.81 | 92.41 | 7.59 | **0.880** | 0.784 | 0.781 | 0.921 |
-| **Red_Neuronal (`nnet`)** | 87.32 | 83.91 | 90.72 | 88.98 | 11.02 | **0.864** | 0.750 | 0.749 | 0.927 |
+| **Ensamble_Stacking** | 88.29 | 82.76 | 93.81 | 92.31 | 7.69 | **0.873** | 0.774 | 0.770 | **0.932** |
+| **Red_Neuronal (`nnet`)** | 87.31 | 83.91 | 90.72 | 89.02 | 10.98 | **0.864** | 0.750 | 0.749 | 0.927 |
 | **SVM_Polinomial (`svmPoly`)** | 87.14 | 80.46 | 93.81 | 92.11 | 7.89 | **0.859** | 0.753 | 0.748 | **0.934** |
 | **LDA \*** | 86.74 | 82.76 | 90.72 | 88.89 | 11.11 | **0.857** | 0.739 | 0.737 | 0.922 |
 | **NaiveBayes (`nb`)** | 86.56 | 79.31 | 93.81 | 92.00 | 8.00 | **0.852** | 0.743 | 0.736 | **0.934** |
-| **ElasticNet (`glmnet`) \*** | 85.28 | 83.91 | 86.60 | 84.88 | 15.12 | **0.844** | 0.706 | 0.705 | 0.930 |
+| **ElasticNet (`glmnet`) \*** | 85.25 | 83.91 | 86.60 | 84.88 | 15.12 | **0.844** | 0.706 | 0.705 | 0.930 |
+| **XGBoost \*** | 84.50 | 79.31 | 89.69 | 87.34 | 12.66 | **0.831** | 0.696 | 0.693 | 0.920 |
 
-#### Unbalanced Scenario (Original Proportions: 87 TP vs. 97 FP)
+#### Unbalanced Scenario (Original Proportions: $87\text{ TP}$ vs. $97\text{ FP}$) — Representative Classifiers
 | Model | Balanced Acc. (%) | Sensitivity (%) | Specificity (%) | Precision (%) | FDR (%) | F1 Score | MCC | Kappa | ROC-AUC |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Weighted_Heuristic** | 88.86 | 83.91 | 93.81 | 92.41 | 7.59 | **0.880** | 0.784 | 0.781 | 0.921 |
+| **Ensamble_Stacking** | 88.35 | 83.91 | 92.78 | 91.25 | 8.75 | **0.874** | 0.772 | 0.770 | **0.935** |
 | **LDA** | 87.26 | 82.76 | 91.75 | 90.00 | 10.00 | **0.862** | 0.750 | 0.748 | 0.922 |
 | **NaiveBayes (`nb`)** | 86.56 | 79.31 | 93.81 | 92.00 | 8.00 | **0.852** | 0.743 | 0.736 | **0.934** |
-| **ElasticNet (`glmnet`)** | 85.76 | 83.91 | 87.63 | 85.88 | 14.12 | **0.849** | 0.716 | 0.716 | 0.930 |
-| **Red_Neuronal (`nnet`) \*** | 84.60 | 80.46 | 88.66 | 86.42 | 13.58 | **0.833** | 0.695 | 0.694 | 0.921 |
-| **SVM_Polinomial (`svmPoly`) \*** | 83.04 | 90.80 | 75.26 | 76.70 | 23.30 | **0.832** | 0.664 | 0.654 | 0.930 |
+| **ElasticNet (`glmnet`)** | 85.77 | 83.91 | 87.63 | 85.88 | 14.12 | **0.849** | 0.716 | 0.716 | 0.930 |
+| **Red_Neuronal (`nnet`) \*** | 84.56 | 80.46 | 88.66 | 86.42 | 13.58 | **0.833** | 0.695 | 0.694 | 0.921 |
+| **XGBoost** | 84.56 | 80.46 | 88.66 | 86.42 | 13.58 | **0.833** | 0.695 | 0.694 | 0.918 |
+| **SVM_Polinomial (`svmPoly`) \*** | 83.03 | 90.80 | 75.26 | 76.70 | 23.30 | **0.832** | 0.664 | 0.654 | 0.930 |
 
-*(\* indicates that the model achieves a superior FDR-weighted global score in its alternative scenario: Balanced vs. Unbalanced).*
+*(\* indicates that the classifier achieves a higher FDR-weighted composite score in the alternative scenario; full 24-method tables are exported in `models/benchmark_models_balanced.tsv` and `models/benchmark_models_unbalanced.tsv`).*
 
 ---
 
-## 8. Citation & License
+## 8. Citation and License
+
+- **Chromosome-scale genomes (*S. torvum* and *S. citrullifolium*):** Solanum Pan-Genomics (https://solpangenomics.com/dist/pages/downloads/index.php), SGN (https://solgenomics.net/ftp/genomes/Solanum_pangenomics/), and NCBI BioProject `PRJNA1073673` (https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673); **Benoit, M. *et al.*** (2025), *Nature*, 640(8057): 135–145, [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Contig-scale genome (*S. stellatiglandulosum*):** NCBI BioProject `PRJNA1070281` (https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D); **Pérez-Mesa, P. A. & Roda, F.** (2025), *Current Opinion in Plant Biology*, 85: 102727, [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); **Pérez-Mesa, P. A., Pardo, R. A., Alseekh, S. *et al.*** (2026), *Plant Molecular Biology*, 116: 67, [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
 
 ```bibtex
 @software{targetcnv_ml_2026,
   author       = {Benítez Duarte, Diego Andrés},
-  title        = {{TargetCNV-ML: Machine Learning & Spatial Inference for Copy Number Variations in Target Capture}},
+  title        = {{TargetCNV-ML: Machine Learning and Spatial Inference for Copy Number Variations in Target Capture}},
   month        = jul,
   year         = 2026,
   publisher    = {Zenodo},
-  version      = {v1.0.0},
+  version      = {v1.1.0},
   doi          = {10.5281/zenodo.23463987},
   url          = {https://doi.org/10.5281/zenodo.23463987}
 }
@@ -494,8 +531,8 @@ If you want to publish a new version of `TargetCNV_Models.zip` on Zenodo contain
   school       = {Universidad Nacional de Colombia},
   year         = 2026,
   address      = {Colombia},
-  note         = {Master Thesis - Bioinformatics}
+  note         = {Master's Thesis in Bioinformatics}
 }
 ```
 
-Released under the **MIT License** — see [LICENSE](LICENSE) for details. Datasets and pre-trained models on Zenodo are licensed under **CC BY 4.0**.
+Released under the **MIT License** — see [LICENSE](LICENSE) for details. Derived datasets and pre-trained models on Zenodo are licensed under **CC BY 4.0**.

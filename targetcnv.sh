@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 
-# ==============================================================================
-# TargetCNV-ML: Unified Command-Line Orchestrator (targetcnv.sh)
-# Ejecuta flujos completos o individuales en una sola linea de Bash
-# ==============================================================================
+# TargetCNV-ML: Pipeline wrapper script (targetcnv.sh)
+# Interfaz de línea de comandos para preparación espacial, entrenamiento,
+# inferencia de CNV, transferencia filogenética y gestión reproducible del entorno.
 
 set -euo pipefail
 
-# Colores ANSI
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
@@ -35,115 +33,156 @@ resolve_default_sources_file() {
 
 print_banner() {
   echo -e "${BOLD}${CYAN}======================================================================${NC}"
-  echo -e "${BOLD}${CYAN}  TargetCNV-ML | Automated CLI & Spatial ML Pipeline for CNV Calling  ${NC}"
+  echo -e "${BOLD}${CYAN}  TargetCNV-ML | Pipeline CLI Wrapper for Spatial ML and CNV Calling  ${NC}"
   echo -e "${BOLD}${CYAN}======================================================================${NC}"
 }
 
 show_help() {
   print_banner
   echo -e "
-
 ${BOLD}USO / USAGE:${NC}
   ./targetcnv.sh <subcomando> [opciones]
 
-${BOLD}SUBCOMANDOS RAPIDOS (1 LINEA EN BASH):${NC}
-  ${GREEN}test${NC} [--sync-root]
-      Ejecuta el Ejemplo Minimo Funcional (MWE) con datos simulados en segundos.
-
-  ${GREEN}zenodo${NC} [--out-dir DIR]
-      Descarga automaticamente los modelos preentrenados oficiales desde Zenodo
-      (DOI: 10.5281/zenodo.23463987), verifica el hash MD5 y descomprime en models/.
-
-  ${GREEN}infer${NC} -i <captus_stats.tsv> [--auto-zenodo] [opciones de 03_cnv_inference.R]
-      Ejecuta inferencia de CNV con el consenso de 7 modelos sobre muestras nuevas.
-      Si se pasa --auto-zenodo y models/ esta vacio, descarga los modelos primero.
-
-  ${GREEN}transfer${NC} [--models-dir DIR] [--cit-data FILE] [--ste-data FILE] [--output FILE]
-      Evalua la transferencia filogenetica de los modelos de S. torvum sobre
-      S. citrullifolium (escala cromosomica) y S. stellatiglandulosum (escala de contigs)
-      y compila el reporte interactivo multiespecie (reporte_transferencia.html).
-
-  ${GREEN}reproduce-storvum${NC} [--cores N]
-      Reproduce en 1 comando el experimento de referencia completo con Solanum torvum
-      (Paso 01 -> Paso 02 -> Paso 03 + Reporte HTML Quarto).
-
-  ${GREEN}run-all${NC} -g <ref.gff3> -c <captus.gff> -s <stats.tsv> [-d <dict.xlsx>] [-i <infer.tsv>] [opciones]
-      Ejecuta el pipeline completo de extremo a extremo (01 -> 02 -> 03) en una sola orden.
-
-  ${GREEN}prepare${NC} [--genome_scale chromosome|contig] [opciones de 01_prepare_data.R]
-      Ejecuta directamente el Modulo 01 (Interseccion espacial o atributo Target).
-
-  ${GREEN}train${NC} [opciones de 02_train_models.R]
-      Ejecuta directamente el Modulo 02 (Torneo ML, Youden, SHAP y reporte Quarto).
-
-  ${GREEN}report${NC} [--models-dir DIR] [--data FILE] [--output FILE]
-      Recompila manualmente el reporte interactivo HTML con Quarto sin reentrenar.
+${BOLD}SUBCOMANDOS DISPONIBLES:${NC}
+  ${GREEN}restore${NC} (alias: ${GREEN}setup${NC})
+      Restaura de forma segura la librería de R exactamente desde renv.lock
+      mediante renv::restore(prompt = FALSE), sin alterar el lockfile.
 
   ${GREEN}doctor${NC}
-      Verifica la instalacion de R, renv, Quarto, herramientas del sistema y paquetes.
+      Verifica la disponibilidad de R, paquetes requeridos, Quarto y utilidades
+      del sistema antes de ejecutar el flujo de trabajo.
 
-${BOLD}EJEMPLOS / EXAMPLES:${NC}
-  # 1. Validar instalacion con el MWE:
+  ${GREEN}test${NC} [--sync-root] [--no-report]
+      Ejecuta el Ejemplo Mínimo Funcional (MWE) con datos simulados en data/test_data/.
+      Nota: --sync-root sobrescribe models/ y results/ en la raíz del repositorio.
+
+  ${GREEN}zenodo${NC} [--out-dir DIR]
+      Descarga los modelos preentrenados desde Zenodo (DOI: 10.5281/zenodo.23463987),
+      verifica la suma MD5, limpia archivos corruptos si falla y valida el contenido.
+
+  ${GREEN}prepare${NC} [--genome_scale chromosome|contig] [opciones de 01_prepare_data.R]
+      Ejecuta el Módulo 01 (intersección espacial GenomicRanges o atributo Target).
+
+  ${GREEN}train${NC} [opciones de 02_train_models.R]
+      Ejecuta el Módulo 02 (colinealidad de Spearman, Youden, clasificadores ML con
+      semillas deterministas, KernelSHAP y reporte HTML de solo lectura).
+
+  ${GREEN}infer${NC} -i <captus_stats.tsv> [--auto-zenodo] [opciones de 03_cnv_inference.R]
+      Ejecuta el Módulo 03 (consenso de 7 modelos, matriz CNV, calibración 30%-80%
+      de --cov_threshold y concordancia por ortogrupo si existe referencia).
+
+  ${GREEN}transfer${NC} [--models-dir DIR] [--cit-data FILE] [--ste-data FILE] [--output FILE]
+      Ejecuta el Módulo 04 (04_evaluate_transferability.R) sobre especies receptoras
+      y compila el reporte de transferencia en modo de solo lectura.
+
+  ${GREEN}reproduce-storvum${NC} [--cores N]
+      Reproduce secuencialmente el experimento completo con Solanum torvum (01 -> 02 -> 03).
+
+  ${GREEN}run-all${NC} -g <ref.gff3> -c <captus.gff> -s <stats.tsv> -d <dict> [-i <infer.tsv>]
+      Ejecuta de principio a fin los módulos 01, 02 y 03 para un nuevo conjunto de datos.
+
+  ${GREEN}report${NC} [--models-dir DIR] [--data FILE] [--output FILE]
+      Compila training_report.qmd en modo de solo lectura sin reentrenar modelos.
+
+${BOLD}EJEMPLOS:${NC}
+  ./targetcnv.sh restore
+  ./targetcnv.sh doctor
   ./targetcnv.sh test
-
-  # 2. Descargar modelos de Zenodo e inferir CNV en muestras nuevas en 1 linea:
   ./targetcnv.sh infer -i data/CAPTUS_Muestras/captus-extract_stats.tsv --auto-zenodo
-
-  # 3. Generar el reporte multiespecie de transferencia filogenetica:
   ./targetcnv.sh transfer
-
-  # 4. Reproducir experimento completo de Solanum torvum:
   ./targetcnv.sh reproduce-storvum --cores 4
-
-  # 5. Entrenar e inferir con una nueva especie en 1 sola linea:
-  ./targetcnv.sh run-all \\
-    -g ruta/genoma.gff3 -c ruta/contigs.gff -s ruta/captus_stats.tsv \\
-    -d ruta/diccionario.xlsx -p MiMuestra -i ruta/muestras_poblacion.tsv
 "
+}
+
+cmd_restore() {
+  print_banner
+  echo -e "\n${BOLD}${BLUE}[RESTORE] Restaurando entorno reproducible desde renv.lock...${NC}"
+  if [ ! -f "$SCRIPT_DIR/renv.lock" ]; then
+    echo -e "${RED}[ERROR] No se encontró renv.lock en $SCRIPT_DIR.${NC}"
+    exit 1
+  fi
+  Rscript -e '
+    if (!requireNamespace("renv", quietly = TRUE)) {
+      stop("El paquete renv no está disponible. Instale renv antes de ejecutar restore.", call. = FALSE)
+    }
+    renv::restore(prompt = FALSE)
+  '
+  echo -e "${BOLD}${GREEN}[OK] Librería restaurada conforme a renv.lock.${NC}\n"
+}
+
+cmd_dev_hydrate() {
+  local update_lock=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --update-lock) update_lock=1; shift ;;
+      -h|--help)
+        echo "Uso interno de desarrollo: ./targetcnv.sh dev-hydrate [--update-lock]"
+        echo "AVISO: Comando reservado para mantenimiento del entorno de desarrollo."
+        echo "       Para instalar dependencias como usuario final, use: ./targetcnv.sh restore"
+        exit 0 ;;
+      *) echo -e "${RED}[ERROR] Opción desconocida en dev-hydrate: $1${NC}"; exit 1 ;;
+    esac
+  done
+
+  print_banner
+  echo -e "\n${YELLOW}[AVISO DE DESARROLLO] Ejecutando hidratación local desde librerías del sistema.${NC}"
+  echo -e "${YELLOW}No utilice este comando para reproducir el entorno; use './targetcnv.sh restore'.${NC}"
+  USER_R_LIBS="$(Rscript --vanilla -e 'cat(paste(.libPaths(), collapse = ":"))')"
+  UPDATE_LOCK_FLAG="$update_lock" Rscript -e "
+    ext_libs <- strsplit('$USER_R_LIBS', ':')[[1]]
+    ext_libs <- ext_libs[nzchar(ext_libs) & dir.exists(ext_libs)]
+    renv::hydrate(sources = ext_libs, prompt = FALSE)
+    if (identical(Sys.getenv('UPDATE_LOCK_FLAG'), '1')) {
+      renv::snapshot(prompt = FALSE)
+      cat('[OK] renv.lock actualizado explícitamente (--update-lock).\n')
+    } else {
+      cat('[OK] Librería local hidratada sin modificar renv.lock.\n')
+    }
+  "
 }
 
 cmd_doctor() {
   print_banner
-  echo -e "\n${BOLD}${BLUE}[DOCTOR] Verificando entorno del sistema y dependencias R...${NC}\n"
+  echo -e "\n${BOLD}${BLUE}[DOCTOR] Verificando utilidades del sistema y dependencias de R...${NC}\n"
   local status=0
 
   for tool in Rscript curl unzip md5sum; do
     if command -v "$tool" >/dev/null 2>&1; then
-      echo -e "  ${GREEN}✓${NC} Herramienta encontrada : ${BOLD}$tool${NC} ($(command -v "$tool"))"
+      echo -e "  ${GREEN}[OK]${NC}    Herramienta detectada : ${BOLD}$tool${NC} ($(command -v "$tool"))"
     else
-      echo -e "  ${RED}✗${NC} Herramienta faltante   : ${BOLD}$tool${NC}"
+      echo -e "  ${RED}[FALTA]${NC} Herramienta ausente   : ${BOLD}$tool${NC}"
       status=1
     fi
   done
 
   if command -v quarto >/dev/null 2>&1; then
-    echo -e "  ${GREEN}✓${NC} Quarto CLI             : ${BOLD}$(quarto --version 2>/dev/null || echo 'Instalado')${NC}"
+    echo -e "  ${GREEN}[OK]${NC}    Quarto CLI            : ${BOLD}$(quarto --version 2>/dev/null || echo 'Instalado')${NC}"
   else
-    echo -e "  ${YELLOW}!${NC} Quarto CLI no detectado (opcional: necesario solo para compilar el reporte HTML)"
+    echo -e "  ${YELLOW}[AVISO]${NC} Quarto CLI no detectado (necesario únicamente para compilar reportes HTML)"
   fi
 
-  echo -e "\n${BOLD}${BLUE}[DOCTOR] Verificando paquetes clave en R...${NC}"
+  echo -e "\n${BOLD}${BLUE}[DOCTOR] Verificando paquetes requeridos en R...${NC}"
   Rscript -e '
     pkgs <- c("optparse", "dplyr", "tidyr", "stringr", "ggplot2", "caret", "glmnet",
               "klaR", "pROC", "GenomicRanges", "rtracklayer", "readxl", "kernelshap",
               "shapviz", "DT", "plotly", "cowplot", "NeuralNetTools", "caretEnsemble",
               "kernlab", "xgboost", "gbm", "randomForest", "RSNNS", "deepnet", "ipred",
-              "doParallel", "knitr", "rmarkdown")
+              "doParallel", "knitr", "rmarkdown", "testthat", "withr")
     missing_pkgs <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
     if (length(missing_pkgs) == 0) {
-      cat("  \033[0;32m✓ Todos los paquetes principales de R estan instalados.\033[0m\n")
+      cat("  [OK] Todos los paquetes requeridos de R están instalados.\n")
     } else {
-      cat("  \033[1;33m! Paquetes faltantes:\033[0m", paste(missing_pkgs, collapse = ", "), "\n")
-      cat("    Ejecute: Rscript -e \"renv::restore()\"\n")
+      cat("  [FALTA] Paquetes ausentes:", paste(missing_pkgs, collapse = ", "), "\n")
+      cat("          Ejecute: ./targetcnv.sh restore\n")
       quit(status = 1)
     }
   ' || status=1
 
   echo ""
   if [ "$status" -eq 0 ]; then
-    echo -e "${BOLD}${GREEN}[OK] El entorno esta listo para ejecutar TargetCNV-ML.${NC}\n"
+    echo -e "${BOLD}${GREEN}[OK] Entorno verificado correctamente.${NC}\n"
   else
-    echo -e "${BOLD}${YELLOW}[AVISO] Revise los elementos marcados arriba antes de ejecutar en produccion.${NC}\n"
+    echo -e "${BOLD}${YELLOW}[AVISO] Corrija los elementos pendientes antes de ejecutar el pipeline completo.${NC}\n"
   fi
   return "$status"
 }
@@ -156,51 +195,87 @@ cmd_zenodo() {
       -h|--help)
         echo "Uso: ./targetcnv.sh zenodo [--out-dir DIR]"
         exit 0 ;;
-      *) echo -e "${RED}[ERROR] Opcion desconocida en zenodo: $1${NC}"; exit 1 ;;
+      *) echo -e "${RED}[ERROR] Opción desconocida en zenodo: $1${NC}"; exit 1 ;;
     esac
   done
 
   print_banner
-  echo -e "\n${BOLD}${BLUE}[ZENODO] Descargando modelos preentrenados oficiales (DOI: 10.5281/zenodo.23463987)...${NC}"
+  echo -e "\n${BOLD}${BLUE}[ZENODO] Descargando modelos preentrenados (DOI: 10.5281/zenodo.23463987)...${NC}"
+  rm -f "$ZENODO_ZIP"
+
   if command -v curl >/dev/null 2>&1; then
-    curl -L --fail --progress-bar -o "$ZENODO_ZIP" "$ZENODO_URL"
+    if ! curl -L --fail --retry 3 --connect-timeout 30 --progress-bar -o "$ZENODO_ZIP" "$ZENODO_URL"; then
+      echo -e "${RED}[ERROR] Falló la descarga con curl desde Zenodo. Limpiando archivo parcial.${NC}"
+      rm -f "$ZENODO_ZIP"
+      exit 1
+    fi
   elif command -v wget >/dev/null 2>&1; then
-    wget -O "$ZENODO_ZIP" "$ZENODO_URL"
+    if ! wget --tries=3 --timeout=30 -O "$ZENODO_ZIP" "$ZENODO_URL"; then
+      echo -e "${RED}[ERROR] Falló la descarga con wget desde Zenodo. Limpiando archivo parcial.${NC}"
+      rm -f "$ZENODO_ZIP"
+      exit 1
+    fi
   else
-    echo -e "${RED}[ERROR] Se requiere curl o wget para descargar desde Zenodo.${NC}"
+    echo -e "${RED}[ERROR] Se requiere curl o wget para descargar artefactos desde Zenodo.${NC}"
+    exit 1
+  fi
+
+  if [ ! -s "$ZENODO_ZIP" ]; then
+    echo -e "${RED}[ERROR] El archivo descargado está vacío o corrupto.${NC}"
+    rm -f "$ZENODO_ZIP"
     exit 1
   fi
 
   if command -v md5sum >/dev/null 2>&1; then
-    echo -e "${BOLD}${BLUE}[ZENODO] Verificando suma de comprobacion MD5...${NC}"
+    echo -e "${BOLD}${BLUE}[ZENODO] Verificando suma de comprobación MD5...${NC}"
     local actual_md5
     actual_md5="$(md5sum "$ZENODO_ZIP" | awk '{print $1}')"
     if [ "$actual_md5" = "$ZENODO_MD5" ]; then
-      echo -e "  ${GREEN}✓ Hash MD5 verificado (${actual_md5})${NC}"
+      echo -e "  ${GREEN}[OK] Suma MD5 verificada (${actual_md5})${NC}"
     else
-      echo -e "  ${RED}✗ Error de integridad MD5: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
+      echo -e "  ${RED}[ERROR] Suma MD5 inválida: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
       rm -f "$ZENODO_ZIP"
       exit 1
     fi
   elif command -v md5 >/dev/null 2>&1; then
-    echo -e "${BOLD}${BLUE}[ZENODO] Verificando suma de comprobacion MD5...${NC}"
+    echo -e "${BOLD}${BLUE}[ZENODO] Verificando suma de comprobación MD5...${NC}"
     local actual_md5
     actual_md5="$(md5 -q "$ZENODO_ZIP")"
     if [ "$actual_md5" = "$ZENODO_MD5" ]; then
-      echo -e "  ${GREEN}✓ Hash MD5 verificado (${actual_md5})${NC}"
+      echo -e "  ${GREEN}[OK] Suma MD5 verificada (${actual_md5})${NC}"
     else
-      echo -e "  ${RED}✗ Error de integridad MD5: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
+      echo -e "  ${RED}[ERROR] Suma MD5 inválida: esperado ${ZENODO_MD5}, recibido ${actual_md5}${NC}"
       rm -f "$ZENODO_ZIP"
       exit 1
     fi
   else
-    echo -e "  ${YELLOW}[AVISO] No se encontro md5sum ni md5 en el sistema: se omitio la verificacion MD5.${NC}"
+    echo -e "  ${YELLOW}[AVISO] No se encontró md5sum ni md5: se omitió la validación criptográfica.${NC}"
   fi
 
   mkdir -p "$out_dir"
-  unzip -o "$ZENODO_ZIP" -d "$out_dir"
+  if ! unzip -o "$ZENODO_ZIP" -d "$out_dir"; then
+    echo -e "${RED}[ERROR] Falló la descompresión de $ZENODO_ZIP. Eliminando archivo corrupto.${NC}"
+    rm -f "$ZENODO_ZIP"
+    exit 1
+  fi
   rm -f "$ZENODO_ZIP"
-  echo -e "${GREEN}✓ Modelos extraidos exitosamente en: ${BOLD}${out_dir}/models/${NC} (archivo temporal .zip eliminado)\n"
+
+  local target_models_dir="${out_dir}/models"
+  if [ ! -f "$target_models_dir/youden_thresholds.rds" ] || [ ! -f "$target_models_dir/heuristic_model.rds" ]; then
+    echo -e "${RED}[ERROR] El paquete extraído no contiene youden_thresholds.rds o heuristic_model.rds en ${target_models_dir}/${NC}"
+    exit 1
+  fi
+
+  local n_ind_models
+  n_ind_models="$(find "$target_models_dir" -maxdepth 1 -name 'model_*.rds' | wc -l | tr -d ' ')"
+  if [ -f "$target_models_dir/consensus_spec.rds" ] && [ "$n_ind_models" -ge 18 ]; then
+    echo -e "  ${GREEN}[OK] Inventario verificado: consensus_spec.rds presente y ${n_ind_models} modelos serializados.${NC}"
+  else
+    echo -e "  ${YELLOW}[AVISO] El archivo de Zenodo contiene ${n_ind_models} archivos model_*.rds (falta consensus_spec.rds o el conjunto completo de 18+1 modelos actualizados).${NC}"
+    echo -e "  ${YELLOW}        Para regenerar localmente los 18 clasificadores (incluyendo XGBoost), Stacking y consensus_spec.rds, ejecute: ./targetcnv.sh train --clean_models${NC}"
+  fi
+
+  echo -e "${GREEN}[OK] Modelos disponibles en: ${BOLD}${target_models_dir}/${NC}\n"
 }
 
 cmd_infer() {
@@ -249,12 +324,12 @@ cmd_reproduce_storvum() {
       -h|--help)
         echo "Uso: ./targetcnv.sh reproduce-storvum [--cores N]"
         exit 0 ;;
-      *) echo -e "${RED}[ERROR] Opcion desconocida: $1${NC}"; exit 1 ;;
+      *) echo -e "${RED}[ERROR] Opción desconocida: $1${NC}"; exit 1 ;;
     esac
   done
 
   print_banner
-  echo -e "\n${BOLD}${BLUE}[STORVUM 1/3] Preparacion de datos e interseccion espacial...${NC}"
+  echo -e "\n${BOLD}${BLUE}[STORVUM 1/3] Preparación de datos e intersección espacial...${NC}"
   Rscript ./scripts/01_prepare_data.R \
     --gff_ref data/reference/Storvum_genes.gff3 \
     --captus_gff data/reference/Storvum_hit_contigs.gff \
@@ -263,7 +338,7 @@ cmd_reproduce_storvum() {
     --sample Storvum \
     --out_dir data/
 
-  echo -e "\n${BOLD}${BLUE}[STORVUM 2/3] Entrenamiento de modelos, Youden, SHAP y Reporte HTML...${NC}"
+  echo -e "\n${BOLD}${BLUE}[STORVUM 2/3] Entrenamiento supervisado determinista, colinealidad, SHAP y reporte HTML...${NC}"
   Rscript ./scripts/02_train_models.R \
     --data data/data_prepared.rds \
     --out_models models/ \
@@ -271,18 +346,19 @@ cmd_reproduce_storvum() {
     --sampling down \
     --cores "$cores" \
     --seed 1234 \
-    --report_file reporte_entrenamiento.html
+    --report_file reports/reporte_entrenamiento.html
 
-  echo -e "\n${BOLD}${BLUE}[STORVUM 3/3] Inferencia multimuestra y extraccion de matriz CNV...${NC}"
+  echo -e "\n${BOLD}${BLUE}[STORVUM 3/3] Inferencia multimuestra y extracción de matriz CNV...${NC}"
   Rscript ./scripts/03_cnv_inference.R \
     --input data/CAPTUS_Muestras/captus-extract_stats.tsv \
     --models_dir models/ \
     --out_dir results/ \
     --cov_threshold 50.0 \
     --min_votes 4 \
-    --top_loci 30
+    --top_loci 30 \
+    --report_file reports/reporte_inferencia.html
 
-  echo -e "\n${BOLD}${GREEN}✓ Experimento de referencia Solanum torvum reproducido con exito.${NC}\n"
+  echo -e "\n${BOLD}${GREEN}[OK] Experimento de referencia con Solanum torvum reproducido correctamente.${NC}\n"
 }
 
 cmd_run_all() {
@@ -303,7 +379,7 @@ cmd_run_all() {
   local min_votes=4
   local cov_threshold="50.0"
   local top_loci=30
-  local report_file="reporte_entrenamiento.html"
+  local report_file="reports/reporte_entrenamiento.html"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -329,7 +405,7 @@ cmd_run_all() {
       -t|--top_loci) top_loci="$2"; shift 2 ;;
       -r|--report_file) report_file="$2"; shift 2 ;;
       -h|--help)
-        echo "Uso: ./targetcnv.sh run-all -g <ref.gff3> -c <captus.gff> -s <stats.tsv> [-d <dict>] [-p <sample>] [-i <infer.tsv>]"
+        echo "Uso: ./targetcnv.sh run-all -g <ref.gff3> -c <captus.gff> -s <stats.tsv> -d <dict> [-p <sample>] [-i <infer.tsv>]"
         exit 0 ;;
       *) echo -e "${RED}[ERROR] Argumento desconocido en run-all: $1${NC}"; exit 1 ;;
     esac
@@ -337,7 +413,7 @@ cmd_run_all() {
 
   if [ -z "$captus_gff" ] || [ -z "$captus_stats" ] || [ -z "$dict_ref" ]; then
     echo -e "${RED}[ERROR] 'run-all' requiere al menos -c (--captus_gff), -s (--captus_stats) y -d (--dict_ref).${NC}"
-    echo -e "${YELLOW}        El diccionario (-d) es obligatorio para generar etiquetas TP y FP antes de entrenar en el Paso 02.${NC}"
+    echo -e "${YELLOW}        El diccionario (-d) es indispensable para clasificar TP y FP antes del entrenamiento.${NC}"
     exit 1
   fi
   if [ -z "$infer_input" ]; then
@@ -372,18 +448,18 @@ cmd_run_all() {
     --min_votes "$min_votes" \
     --top_loci "$top_loci"
 
-  echo -e "\n${BOLD}${GREEN}✓ Pipeline completo finalizado exitosamente.${NC}"
-  echo -e "  • Datos preparados : ${CYAN}${out_data}/data_prepared.rds${NC}"
-  echo -e "  • Modelos          : ${CYAN}${out_models}/${NC}"
-  echo -e "  • Resultados CNV   : ${CYAN}${out_results}/cnv_matrix.tsv${NC}"
-  echo -e "  • Reporte HTML     : ${CYAN}${report_file}${NC}\n"
+  echo -e "\n${BOLD}${GREEN}[OK] Flujo completo finalizado.${NC}"
+  echo -e "  - Datos preparados : ${CYAN}${out_data}/data_prepared.rds${NC}"
+  echo -e "  - Modelos          : ${CYAN}${out_models}/${NC}"
+  echo -e "  - Matriz CNV       : ${CYAN}${out_results}/cnv_matrix.tsv${NC}"
+  echo -e "  - Reporte HTML     : ${CYAN}${report_file}${NC}\n"
 }
 
 cmd_report() {
   local models_dir="models"
   local data_file="data/data_prepared.rds"
   local sources_file=""
-  local output_file="reporte_entrenamiento.html"
+  local output_file="reports/reporte_entrenamiento.html"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -399,11 +475,15 @@ cmd_report() {
         fi ;;
       -o|--output) output_file="$2"; shift 2 ;;
       -h|--help)
-        echo "Uso: ./targetcnv.sh report [--models-dir models] [--data data/data_prepared.rds] [--sources data/reference/sources_citations.tsv] [--output reporte_entrenamiento.html]"
+        echo "Uso: ./targetcnv.sh report [--models-dir models] [--data data/data_prepared.rds] [--sources data/reference/sources_citations.tsv] [--output reports/reporte_entrenamiento.html]"
         exit 0 ;;
-      *) echo -e "${RED}[ERROR] Opcion desconocida en report: $1${NC}"; exit 1 ;;
+      *) echo -e "${RED}[ERROR] Opción desconocida en report: $1${NC}"; exit 1 ;;
     esac
   done
+
+  local out_base
+  out_base="$(basename "$output_file")"
+  mkdir -p "$(dirname "$output_file")"
 
   quarto render training_report.qmd \
     -P project_root:"$SCRIPT_DIR" \
@@ -411,7 +491,12 @@ cmd_report() {
     -P data_path:"$data_file" \
     -P data_file:"$data_file" \
     -P sources_file:"$sources_file" \
-    --output "$(basename "$output_file")"
+    --output "$out_base"
+
+  if [ -f "$SCRIPT_DIR/$out_base" ] && [ "$(cd "$(dirname "$output_file")" && pwd)/$out_base" != "$SCRIPT_DIR/$out_base" ]; then
+    mv -f "$SCRIPT_DIR/$out_base" "$output_file"
+  fi
+  echo -e "${BOLD}${GREEN}[OK] Reporte compilado en modo de solo lectura: ${CYAN}${output_file}${NC}"
 }
 
 cmd_transfer() {
@@ -426,20 +511,26 @@ cmd_transfer() {
   local dict_ref=""
   local sources_file=""
   local extra_species=""
+  local cov_threshold="50.0"
+  local min_votes="4"
   local out_dir="results"
-  local output_file="reporte_transferencia.html"
+  local output_file="reports/reporte_transferencia.html"
+  local no_report=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -m|--models-dir) models_dir="$2"; shift 2 ;;
-      --donor-data) donor_data="$2"; shift 2 ;;
-      --cit-data) cit_data="$2"; shift 2 ;;
-      --ste-data) ste_data="$2"; shift 2 ;;
-      --cit-gff-ref) cit_gff_ref="$2"; shift 2 ;;
-      --cit-captus-gff) cit_captus_gff="$2"; shift 2 ;;
-      --ste-captus-gff) ste_captus_gff="$2"; shift 2 ;;
-      -s|--stats) captus_stats="$2"; shift 2 ;;
-      -d|--dict) dict_ref="$2"; shift 2 ;;
+      -m|--models-dir|--models_dir) models_dir="$2"; shift 2 ;;
+      --donor-data|--donor_data) donor_data="$2"; shift 2 ;;
+      --cit-data|--cit_data) cit_data="$2"; shift 2 ;;
+      --ste-data|--ste_data) ste_data="$2"; shift 2 ;;
+      --cit-gff-ref|--cit_gff_ref) cit_gff_ref="$2"; shift 2 ;;
+      --cit-captus-gff|--cit_captus_gff) cit_captus_gff="$2"; shift 2 ;;
+      --ste-captus-gff|--ste_captus_gff) ste_captus_gff="$2"; shift 2 ;;
+      -s|--stats|--captus_stats) captus_stats="$2"; shift 2 ;;
+      -d|--dict|--dict_ref) dict_ref="$2"; shift 2 ;;
+      -c|--cov-threshold|--cov_threshold) cov_threshold="$2"; shift 2 ;;
+      -v|--min-votes|--min_votes) min_votes="$2"; shift 2 ;;
+      --no-report|--no_render_report) no_report=1; shift ;;
       --sources)
         if [[ $# -ge 2 && "${2:-}" != -* ]]; then
           sources_file="$2"
@@ -448,43 +539,54 @@ cmd_transfer() {
           sources_file="$(resolve_default_sources_file)"
           shift 1
         fi ;;
-      --extra-species) extra_species="$2"; shift 2 ;;
-      --out-dir) out_dir="$2"; shift 2 ;;
-      -o|--output) output_file="$2"; shift 2 ;;
+      --extra-species|--extra_species) extra_species="$2"; shift 2 ;;
+      --out-dir|--out_dir) out_dir="$2"; shift 2 ;;
+      -o|--output|--report_file) output_file="$2"; shift 2 ;;
       -h|--help)
-        echo "Uso: ./targetcnv.sh transfer [--models-dir models] [--cit-data data/citrullifolium/data_prepared.rds] [--ste-data data/stellatiglandulosum/data_prepared.rds] [--sources data/reference/sources_citations.tsv] [--output reporte_transferencia.html]"
+        echo "Uso: ./targetcnv.sh transfer [--models-dir models] [--cit-data data/citrullifolium/data_prepared.rds] [--ste-data data/stellatiglandulosum/data_prepared.rds] [--cov-threshold 50.0] [--out-dir results] [--output reports/reporte_transferencia.html]"
         exit 0 ;;
-      *) echo -e "${RED}[ERROR] Opcion desconocida en transfer: $1${NC}"; exit 1 ;;
+      *) echo -e "${RED}[ERROR] Opción desconocida en transfer: $1${NC}"; exit 1 ;;
     esac
   done
 
   print_banner
-  echo -e "\n${BOLD}${BLUE}[TRANSFER] Compilando Reporte Multiespecie de Transferencia Filogenetica (${output_file})...${NC}"
+  echo -e "\n${BOLD}${BLUE}[TRANSFER] Ejecutando evaluación de transferibilidad y concordancia CNV (04_evaluate_transferability.R)...${NC}"
 
-  quarto render transferability_report.qmd \
-    -P project_root:"$SCRIPT_DIR" \
-    -P models_dir:"$models_dir" \
-    -P donor_data:"$donor_data" \
-    -P cit_data:"$cit_data" \
-    -P ste_data:"$ste_data" \
-    -P cit_gff_ref:"$cit_gff_ref" \
-    -P cit_captus_gff:"$cit_captus_gff" \
-    -P ste_captus_gff:"$ste_captus_gff" \
-    -P captus_stats:"$captus_stats" \
-    -P dict_ref:"$dict_ref" \
-    -P sources_file:"$sources_file" \
-    -P extra_species:"$extra_species" \
-    -P out_dir:"$out_dir" \
-    --output "$(basename "$output_file")"
+  local tr_args=(
+    --models_dir "$models_dir"
+    --donor_data "$donor_data"
+    --cit_data "$cit_data"
+    --ste_data "$ste_data"
+    --cov_threshold "$cov_threshold"
+    --min_votes "$min_votes"
+    --out_dir "$out_dir"
+    --report_file "$output_file"
+  )
+  [ -n "$cit_gff_ref" ]    && tr_args+=(--cit_gff_ref "$cit_gff_ref")
+  [ -n "$cit_captus_gff" ] && tr_args+=(--cit_captus_gff "$cit_captus_gff")
+  [ -n "$ste_captus_gff" ] && tr_args+=(--ste_captus_gff "$ste_captus_gff")
+  [ -n "$captus_stats" ]   && tr_args+=(--captus_stats "$captus_stats")
+  [ -n "$dict_ref" ]       && tr_args+=(--dict_ref "$dict_ref")
+  [ -n "$sources_file" ]   && tr_args+=(--sources "$sources_file")
+  [ -n "$extra_species" ]  && tr_args+=(--extra_species "$extra_species")
+  [ "$no_report" -eq 1 ]   && tr_args+=(--no_render_report)
 
-  echo -e "${BOLD}${GREEN}✓ Reporte de transferencia filogenetica generado: ${CYAN}${output_file}${NC}\n"
+  Rscript ./scripts/04_evaluate_transferability.R "${tr_args[@]}"
 }
 
-# Enrutador principal de subcomandos
 SUBCOMMAND="${1:-help}"
 shift || true
 
 case "$SUBCOMMAND" in
+  restore|setup)
+    cmd_restore "$@" ;;
+  dev-hydrate)
+    cmd_dev_hydrate "$@" ;;
+  snapshot)
+    echo -e "${YELLOW}[AVISO] El antiguo subcomando 'snapshot' sobrescribía renv.lock con paquetes globales del sistema y ha sido desactivado para proteger la reproducibilidad.${NC}"
+    echo -e "        - Para instalar el entorno reproducible desde renv.lock, ejecute: ${BOLD}./targetcnv.sh restore${NC}"
+    echo -e "        - Si desarrolla el paquete internamente, utilice: ${BOLD}./targetcnv.sh dev-hydrate [--update-lock]${NC}"
+    exit 1 ;;
   test|mwe)
     bash ./run_test_pipeline.sh "$@" ;;
   zenodo|download-models)
@@ -503,34 +605,6 @@ case "$SUBCOMMAND" in
     cmd_reproduce_storvum "$@" ;;
   report)
     cmd_report "$@" ;;
-  snapshot)
-    print_banner
-    echo -e "\n${BOLD}${BLUE}[SNAPSHOT] Vinculando todos los paquetes (incluyendo Quarto/rmarkdown/knitr y motores caret) a renv/library...${NC}"
-    USER_R_LIBS="$(Rscript --vanilla -e 'cat(paste(.libPaths(), collapse = ":"))')"
-    Rscript -e "
-      ext_libs <- strsplit('$USER_R_LIBS', ':')[[1]]
-      ext_libs <- ext_libs[nzchar(ext_libs) & dir.exists(ext_libs)]
-      cat('  -> Librerias base detectadas:', paste(ext_libs, collapse = ', '), '\n')
-      req_pkgs <- c(
-        'rmarkdown', 'knitr', 'DT', 'plotly', 'cowplot', 'jsonlite', 'htmltools',
-        'optparse', 'dplyr', 'tidyr', 'stringr', 'ggplot2', 'caret', 'caretEnsemble',
-        'glmnet', 'klaR', 'kernlab', 'randomForest', 'gbm', 'xgboost', 'RSNNS',
-        'deepnet', 'ipred', 'e1071', 'MASS', 'nnet', 'rpart', 'rpart.plot',
-        'pROC', 'GenomicRanges', 'rtracklayer', 'S4Vectors', 'IRanges', 'readxl',
-        'kernelshap', 'shapviz', 'NeuralNetTools', 'doParallel', 'foreach'
-      )
-      avail_pkgs <- req_pkgs[sapply(req_pkgs, function(p) any(file.exists(file.path(ext_libs, p))))]
-      renv::hydrate(packages = avail_pkgs, sources = ext_libs, prompt = FALSE)
-      renv::hydrate(sources = ext_libs, prompt = FALSE)
-      if (requireNamespace('BiocVersion', quietly = TRUE)) {
-        bioc_ver <- as.character(packageVersion('BiocVersion')[, 1:2])
-        tryCatch(renv::settings\$bioconductor.version(bioc_ver), error = function(e) {})
-        cat('  -> Bioconductor detectado:', bioc_ver, '\n')
-      }
-      renv::settings\$external.libraries(character(0))
-      renv::snapshot(type = 'all', prompt = FALSE, force = TRUE)
-    "
-    echo -e "${GREEN}✓ renv/library vinculado (con knitr, rmarkdown y motores caret) y renv.lock actualizado exitosamente.${NC}\n" ;;
   doctor|check)
     cmd_doctor "$@" ;;
   -h|--help|help)

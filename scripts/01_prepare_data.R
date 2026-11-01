@@ -1,9 +1,6 @@
 #!/usr/bin/env Rscript
 
-# ==============================================================================
-# TargetCNV-ML Pipeline
-# Script 01: Data Preparation, Spatial Intersection & Ground Truth Classification
-# ==============================================================================
+# Módulo 01: Preparación de datos de CAPTUS, cruce espacial y etiquetado de referencia
 
 t_start <- Sys.time()
 
@@ -287,20 +284,12 @@ stats_integrado <- stats_limpio %>%
     wscore = as.numeric(wscore)
   )
 
-# 5. Resolucion de redundancias y calculo de deltas
-cat("[5/6] Resolviendo redundancias y computando deltas locales intra-locus...\n")
-stats_sin_redundancias <- resolve_redundancies(
+# 5. Resolución de redundancias técnicas intra-locus
+cat("[5/6] Resolviendo redundancias técnicas intra-locus...\n")
+stats_preparado <- resolve_redundancies(
   df = stats_integrado,
   locus_col = "Locus_Ref_Limpio",
   class_col = "Validacion_Espacial"
-)
-
-stats_preparado <- calculate_locus_deltas(
-  df = stats_sin_redundancias,
-  locus_col = "locus",
-  score_col = "score",
-  wscore_col = "wscore",
-  identity_col = "pct_identity"
 )
 
 attr(stats_preparado, "genome_scale") <- opt$genome_scale

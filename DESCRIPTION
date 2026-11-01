@@ -1,0 +1,69 @@
+Package: TargetCNVML
+Type: Package
+Title: Spatial Ground-Truth Validation, Supervised Classification, and Copy-Number Inference for Target-Capture Data
+Version: 1.1.0
+Authors@R: person(
+    given = "Diego Andres",
+    family = "Benitez Duarte",
+    role = c("aut", "cre"),
+    comment = "Maestria en Bioinformatica, Universidad Nacional de Colombia"
+  )
+Description: Modular R toolkit and command-line pipeline for copy-number variation (CNV)
+  estimation from target-capture assemblies produced by CAPTUS. Implements spatial
+  coordinate intersection against chromosome-scale or contig-scale reference genomes,
+  supervised classifier benchmarking with deterministic cross-validation, multi-model
+  consensus voting, orthogroup-level copy-number concordance metrics, and cross-species
+  phylogenetic transferability evaluation.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: false
+RoxygenNote: 7.3.2
+Imports:
+    caret,
+    caretEnsemble,
+    colorspace,
+    cowplot,
+    deepnet,
+    doParallel,
+    dplyr,
+    DT,
+    e1071,
+    foreach,
+    gbm,
+    GenomicRanges,
+    ggplot2,
+    glmnet,
+    htmltools,
+    ipred,
+    IRanges,
+    jsonlite,
+    kernlab,
+    kernelshap,
+    klaR,
+    knitr,
+    magrittr,
+    MASS,
+    NeuralNetTools,
+    nnet,
+    optparse,
+    plotly,
+    pROC,
+    randomForest,
+    readxl,
+    rlang,
+    rmarkdown,
+    rpart,
+    rpart.plot,
+    RSNNS,
+    rtracklayer,
+    S4Vectors,
+    shapviz,
+    stats,
+    stringr,
+    tidyr,
+    utils,
+    withr,
+    xgboost,
+    yaml
+Suggests:
+    testthat (>= 3.0.0)

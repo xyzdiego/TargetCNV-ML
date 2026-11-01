@@ -1,11 +1,12 @@
 ---
 title: "TargetCNV-ML: Reporte de Inferencia de CNV y Consenso Multimodelo"
-subtitle: "Votación de 7 Modelos, Estimación de Copias Génicas y Matriz de CNV"
-author: "TargetCNV-ML Pipeline"
+subtitle: "Votación de 7 Modelos, Sensibilidad del Umbral de Cobertura y Matriz de Copias Génicas"
+author: "TargetCNV-ML"
 date: today
 format:
   html:
     theme: cosmo
+    css: assets/report.css
     toc: true
     toc-depth: 3
     toc-location: left
@@ -23,7 +24,10 @@ params:
   cnv_matrix: "results/cnv_matrix.tsv"
   cnv_annotated: "results/cnv_annotated_sequences.tsv"
   functional_genes: "results/functional_genes_catalog.tsv"
+  cnv_sensitivity: "results/cnv_threshold_sensitivity.tsv"
+  cnv_concordance: "results/cnv_concordance_summary.tsv"
   transferability_benchmark: "results/transferability_benchmark.tsv"
+  cov_threshold: 50.0
   sources_file: ""
   top_loci: 30
 execute:
@@ -31,61 +35,6 @@ execute:
   warning: false
   message: false
 ---
-
-```{css}
-.kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
-  gap: 14px;
-  margin-top: 12px;
-  margin-bottom: 22px;
-}
-.kpi-card {
-  background: #ffffff;
-  border: 1px solid #dce1e5;
-  border-left: 5px solid #2980b9;
-  border-radius: 8px;
-  padding: 14px 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}
-.kpi-card.green  { border-left-color: #27ae60; }
-.kpi-card.red    { border-left-color: #c0392b; }
-.kpi-card.purple { border-left-color: #8e44ad; }
-.kpi-card.orange { border-left-color: #d35400; }
-.kpi-title {
-  font-size: 0.84rem;
-  color: #5d6d7e;
-  font-weight: 600;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-.kpi-value {
-  font-size: 1.55rem;
-  font-weight: 700;
-  color: #2c3e50;
-}
-.kpi-sub {
-  font-size: 0.82rem;
-  color: #7f8c8d;
-  margin-top: 2px;
-}
-.rule-box {
-  background-color: #f8f9fa;
-  border-left: 4px solid #2c3e50;
-  padding: 14px 18px;
-  border-radius: 6px;
-  margin-bottom: 14px;
-}
-.note-box {
-  background-color: #fef9e7;
-  border-left: 4px solid #f39c12;
-  padding: 14px 18px;
-  border-radius: 6px;
-  margin-bottom: 18px;
-  color: #2c3e50;
-  font-size: 0.95rem;
-}
-```
 
 ```{r setup, include=FALSE}
 suppressPackageStartupMessages({
@@ -97,27 +46,22 @@ suppressPackageStartupMessages({
   library(plotly)
 })
 
-proj_root <- params$project_root
-top_n_loci <- as.numeric(params$top_loci)
+proj_root  <- params$project_root
+top_n_loci <- suppressWarnings(as.numeric(params$top_loci))
 if (is.na(top_n_loci) || top_n_loci < 1) top_n_loci <- 30
+cov_thr    <- suppressWarnings(as.numeric(params$cov_threshold))
+if (is.na(cov_thr) || cov_thr <= 0) cov_thr <- 50.0
 
-if (file.exists(file.path(proj_root, "R", "plotting.R"))) {
-  source(file.path(proj_root, "R", "plotting.R"))
+for (mod_file in c("plotting.R", "report_helpers.R")) {
+  f_full <- file.path(proj_root, "R", mod_file)
+  if (file.exists(f_full)) source(f_full)
 }
 
-read_tsv_safe <- function(path_str) {
-  if (!is.null(path_str) && nzchar(path_str) && file.exists(path_str)) {
-    utils::read.delim(path_str, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
-  } else {
-    NULL
-  }
-}
-
+sources_df    <- load_sources_citations(params$sources_file, proj_root = proj_root)
 df_consenso   <- read_tsv_safe(params$consensus_verdicts)
 df_matriz_cnv <- read_tsv_safe(params$cnv_matrix)
 df_anotado    <- read_tsv_safe(params$cnv_annotated)
 
-# Normalizar las categorias a la regla de un solo umbral (Copia_Principal, Homologo_Confirmado, No_Contado)
 normalize_copy_classes <- function(df) {
   if (is.null(df) || nrow(df) == 0 || !"Clasificacion_Copia" %in% colnames(df)) return(df)
   df %>%
@@ -130,114 +74,43 @@ normalize_copy_classes <- function(df) {
     )
 }
 
-df_anotado <- normalize_copy_classes(df_anotado)
-
-func_path <- if (!is.null(params$functional_genes) && file.exists(params$functional_genes)) {
-  params$functional_genes
-} else if (!is.null(params$cnv_annotated)) {
-  file.path(dirname(params$cnv_annotated), "functional_genes_catalog.tsv")
-} else {
-  "results/functional_genes_catalog.tsv"
-}
-df_funcionales <- normalize_copy_classes(read_tsv_safe(func_path))
-
-trans_path <- if (!is.null(params$transferability_benchmark) && file.exists(params$transferability_benchmark)) {
-  params$transferability_benchmark
-} else if (!is.null(params$cnv_matrix)) {
-  file.path(dirname(params$cnv_matrix), "transferability_benchmark.tsv")
-} else {
-  "results/transferability_benchmark.tsv"
-}
-df_transfer <- read_tsv_safe(trans_path)
-
-make_export_dt <- function(df, caption_txt = NULL, page_len = 20) {
-  if (is.null(df) || nrow(df) == 0) return(NULL)
-  DT::datatable(
-    df,
-    rownames = FALSE,
-    caption = caption_txt,
-    extensions = "Buttons",
-    options = list(
-      pageLength = page_len,
-      lengthMenu = c(10, 20, 50, 100),
-      scrollX = TRUE,
-      dom = "Bfrtip",
-      buttons = list(
-        list(extend = "copy",  text = "Copiar Tabla",   exportOptions = list(modifier = list(page = "all"))),
-        list(extend = "csv",   text = "Exportar CSV",   exportOptions = list(modifier = list(page = "all"))),
-        list(extend = "excel", text = "Exportar Excel", exportOptions = list(modifier = list(page = "all")))
-      ),
-      language = list(
-        search = "Filtrar:",
-        zeroRecords = "No se encontraron registros",
-        emptyTable = "Sin datos disponibles"
-      )
-    )
-  )
-}
+df_anotado     <- normalize_copy_classes(df_anotado)
+df_funcionales <- normalize_copy_classes(read_tsv_safe(params$functional_genes))
+df_sens        <- read_tsv_safe(params$cnv_sensitivity)
+df_conc        <- read_tsv_safe(params$cnv_concordance)
+df_transfer    <- read_tsv_safe(params$transferability_benchmark)
 ```
 
-## Resumen General de la Inferencia y Consenso (7 Modelos)
+## Resumen de la Inferencia y Consenso de 7 Modelos
 
-Cada secuencia funcional ensamblada por CAPTUS (`marker_type == NUC`) es evaluada de manera independiente por **7 métodos**: **4 clasificadores de Machine Learning** (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), **2 puntos de corte de Youden** (`pct_recovered`, `pct_identity`) y **1 modelo heurístico ponderado**. Las secuencias que suman al menos el mínimo de votos requerido se aceptan como `Homologo_Valido` y pasan a la estimación de copias por locus.
+Cada secuencia nuclear ensamblada por CAPTUS (`marker_type == NUC`) es clasificada por **7 métodos**: **4 modelos supervisados** (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), **2 umbrales univariados de Youden** (`pct_recovered`, `pct_identity`) y **1 ensamble heurístico ponderado**. Las secuencias que alcanzan el mínimo de votos requerido se clasifican como `Homologo_Valido` e ingresan al conteo de copias por ortogrupo.
 
-```{r inference_sources_info, results="asis"}
-orig_inf_files <- paste(unique(basename(na.omit(c(params$consensus_verdicts, params$cnv_matrix, params$cnv_annotated)))), collapse = ", ")
-src_inf_df <- NULL
-if (!is.null(params$sources_file) && nzchar(trimws(params$sources_file))) {
-  cand_s <- c(params$sources_file, file.path(proj_root, params$sources_file), file.path(proj_root, "data", "reference", "sources_citations.tsv"), file.path(proj_root, "sources_citations.tsv"))
-  found_s <- cand_s[file.exists(cand_s)][1]
-  if (!is.na(found_s) && nzchar(found_s)) {
-    src_inf_df <- tryCatch(utils::read.delim(found_s, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE), error = function(e) NULL)
-  }
-}
-src_inf_hit <- NULL
-if (!is.null(src_inf_df) && nrow(src_inf_df) > 0 && "sample_id" %in% colnames(src_inf_df)) {
-  samp_ids <- if (!is.null(df_consenso) && "Sample" %in% colnames(df_consenso)) unique(as.character(df_consenso$Sample)) else character(0)
-  m_rows <- src_inf_df[tolower(trimws(src_inf_df$sample_id)) %in% tolower(trimws(samp_ids)), , drop = FALSE]
-  if (nrow(m_rows) == 0) {
-    m_rows <- src_inf_df[tolower(trimws(src_inf_df$sample_id)) == "chromosome_default", , drop = FALSE]
-  }
-  if (nrow(m_rows) > 0) src_inf_hit <- m_rows[1, , drop = FALSE]
-}
-if (!is.null(src_inf_hit)) {
-  cat(paste0(
-    "<div class=\"rule-box\">",
-    sprintf("<b>• Fuente de Referencia / Modelos:</b> %s<br>", as.character(src_inf_hit$genome_source[1])),
-    sprintf("<b>• Fuente de Homología y Datos Génicos:</b> %s<br>", as.character(src_inf_hit$homology_source[1])),
-    sprintf("<b>• Archivos de Origen:</b> <code>%s</code>", orig_inf_files),
-    "</div>\n"
-  ))
-} else {
-  cat(sprintf("<div class=\"rule-box\"><b>• Archivos de Origen:</b> <code>%s</code></div>\n", orig_inf_files))
-}
-```
+```{r inference_sources_and_kpis, results="asis"}
+orig_files <- paste(unique(basename(stats::na.omit(c(params$consensus_verdicts, params$cnv_matrix, params$cnv_annotated)))), collapse = ", ")
+samp_ids <- if (!is.null(df_consenso) && "Sample" %in% colnames(df_consenso)) unique(as.character(df_consenso$Sample)) else NULL
+cat(render_sources_box_html(sources_df, sample_ids = samp_ids, default_scale = "chromosome", origin_files = orig_files, box_class = "rule-box"))
 
-```{r kpi_cards, results='asis'}
 if (!is.null(df_consenso) && nrow(df_consenso) > 0) {
-  n_total <- nrow(df_consenso)
-  n_samples <- if ("Sample" %in% colnames(df_consenso)) length(unique(df_consenso$Sample)) else 1
-  n_valid <- sum(df_consenso$Veredicto_Consenso %in% c("Homologo_Valido", "Ortologo_Valido"), na.rm = TRUE)
-  n_noise <- sum(df_consenso$Veredicto_Consenso == "Ruido_Descartado", na.rm = TRUE)
-  pct_valid <- round((n_valid / n_total) * 100, 1)
-  pct_noise <- round((n_noise / n_total) * 100, 1)
-
-  n_loci <- if (!is.null(df_matriz_cnv)) nrow(df_matriz_cnv) else 0
-  n_est <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia %in% c("Copia_Principal", "Homologo_Confirmado"), na.rm = TRUE) else 0
-  n_homolog <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia == "Homologo_Confirmado", na.rm = TRUE) else 0
-  n_no_contado <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia == "No_Contado", na.rm = TRUE) else 0
+  n_total   <- nrow(df_consenso)
+  n_samples <- if ("Sample" %in% colnames(df_consenso)) length(unique(df_consenso$Sample)) else 1L
+  n_valid   <- sum(df_consenso$Veredicto_Consenso %in% c("Homologo_Valido", "Ortologo_Valido"), na.rm = TRUE)
+  n_noise   <- sum(df_consenso$Veredicto_Consenso == "Ruido_Descartado", na.rm = TRUE)
+  n_loci    <- if (!is.null(df_matriz_cnv)) nrow(df_matriz_cnv) else 0L
+  n_est     <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia %in% c("Copia_Principal", "Homologo_Confirmado"), na.rm = TRUE) else 0L
+  n_hom     <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia == "Homologo_Confirmado", na.rm = TRUE) else 0L
+  n_noc     <- if (!is.null(df_anotado)) sum(df_anotado$Clasificacion_Copia == "No_Contado", na.rm = TRUE) else 0L
 
   cat(paste0(
     '<div class="kpi-grid">',
-    sprintf('<div class="kpi-card"><div class="kpi-title">Secuencias Evaluadas</div><div class="kpi-value">%d</div><div class="kpi-sub">En %d muestra(s) biológica(s)</div></div>', n_total, n_samples),
-    sprintf('<div class="kpi-card green"><div class="kpi-title">Homólogos Válidos</div><div class="kpi-value">%d (%s%%)</div><div class="kpi-sub">Aceptados por consenso</div></div>', n_valid, pct_valid),
-    sprintf('<div class="kpi-card red"><div class="kpi-title">Ruido Descartado</div><div class="kpi-value">%d (%s%%)</div><div class="kpi-sub">Filtrados por baja calidad</div></div>', n_noise, pct_noise),
-    sprintf('<div class="kpi-card purple"><div class="kpi-title">Copias estimadas</div><div class="kpi-value">%d</div><div class="kpi-sub">%d loci | %d homólogos confirmados</div></div>', n_est, n_loci, n_homolog),
-    sprintf('<div class="kpi-card orange"><div class="kpi-title">Contigs adicionales no contados (&lt;50%%)</div><div class="kpi-value">%d</div><div class="kpi-sub">Secuencias adicionales &lt; 50%% de cobertura</div></div>', n_no_contado),
+    sprintf('<div class="kpi-card"><div class="kpi-title">Secuencias Evaluadas</div><div class="kpi-value">%d</div><div class="kpi-sub">En %d muestra(s)</div></div>', n_total, n_samples),
+    sprintf('<div class="kpi-card green"><div class="kpi-title">Homólogos Válidos</div><div class="kpi-value">%d (%.1f%%)</div><div class="kpi-sub">Aceptados por consenso</div></div>', n_valid, 100 * n_valid / n_total),
+    sprintf('<div class="kpi-card red"><div class="kpi-title">Ruido Descartado</div><div class="kpi-value">%d (%.1f%%)</div><div class="kpi-sub">Filtrados por consenso</div></div>', n_noise, 100 * n_noise / n_total),
+    sprintf('<div class="kpi-card purple"><div class="kpi-title">Copias Estimadas</div><div class="kpi-value">%d</div><div class="kpi-sub">%d ortogrupos | %d homólogos adicionales</div></div>', n_est, n_loci, n_hom),
+    sprintf('<div class="kpi-card orange"><div class="kpi-title">Fragmentos No Contados</div><div class="kpi-value">%d</div><div class="kpi-sub">Secuencias adicionales &lt; %.1f%%</div></div>', n_noc, cov_thr),
     '</div>\n'
   ))
 } else {
-  cat("> *No se encontró el archivo `consensus_verdicts.tsv`.*\n")
+  cat('<div class="missing-alert">No se encontró <code>consensus_verdicts.tsv</code>. Ejecute primero <code>./targetcnv.sh infer</code>.</div>\n')
 }
 ```
 
@@ -247,31 +120,15 @@ if (!is.null(df_consenso) && nrow(df_consenso) > 0) {
 
 ```{r plot_consensus_by_sample}
 if (!is.null(df_consenso) && nrow(df_consenso) > 0) {
-  df_sum_s <- df_consenso %>%
-    dplyr::count(Sample, Veredicto_Consenso, name = "Secuencias")
-
+  df_sum_s <- df_consenso %>% dplyr::count(Sample, Veredicto_Consenso, name = "Secuencias")
   p_bar <- ggplot2::ggplot(df_sum_s, ggplot2::aes(x = Sample, y = Secuencias, fill = Veredicto_Consenso)) +
     ggplot2::geom_col(position = "stack", width = 0.65) +
-    ggplot2::scale_fill_manual(
-      values = c("Homologo_Valido" = "#27ae60", "Ortologo_Valido" = "#27ae60", "Ruido_Descartado" = "#c0392b")
-    ) +
-    ggplot2::labs(
-      x = "Muestra",
-      y = "Número de Secuencias (NUC)",
-      fill = "Veredicto Consenso"
-    ) +
+    ggplot2::scale_fill_manual(values = c("Homologo_Valido" = "#27ae60", "Ortologo_Valido" = "#27ae60", "Ruido_Descartado" = "#c0392b")) +
+    ggplot2::labs(x = "Muestra", y = "Secuencias (NUC)", fill = "Veredicto") +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
-
   plotly::ggplotly(p_bar) %>%
-    plotly::layout(
-      title = list(
-        text = "<b>Secuencias Aceptadas (Homólogo Válido) vs. Ruido Descartado por Muestra</b>",
-        x = 0.5,
-        font = list(size = 14)
-      ),
-      margin = list(t = 65)
-    )
+    plotly::layout(title = list(text = "<b>Secuencias Aceptadas vs. Ruido Descartado por Muestra</b>", x = 0.5), margin = list(t = 65))
 }
 ```
 
@@ -282,28 +139,13 @@ if (!is.null(df_consenso) && "Votos_TP" %in% colnames(df_consenso)) {
   df_v <- df_consenso %>%
     dplyr::count(Votos_TP, Veredicto_Consenso, name = "Secuencias") %>%
     dplyr::mutate(Votos_TP = factor(Votos_TP, levels = 0:7))
-
   p_v <- ggplot2::ggplot(df_v, ggplot2::aes(x = Votos_TP, y = Secuencias, fill = Veredicto_Consenso)) +
     ggplot2::geom_col(width = 0.65) +
-    ggplot2::scale_fill_manual(
-      values = c("Homologo_Valido" = "#27ae60", "Ortologo_Valido" = "#27ae60", "Ruido_Descartado" = "#c0392b")
-    ) +
-    ggplot2::labs(
-      x = "Votos Positivos (TP) de los 7 Modelos",
-      y = "Cantidad de Secuencias",
-      fill = "Veredicto Final"
-    ) +
+    ggplot2::scale_fill_manual(values = c("Homologo_Valido" = "#27ae60", "Ortologo_Valido" = "#27ae60", "Ruido_Descartado" = "#c0392b")) +
+    ggplot2::labs(x = "Votos Positivos (TP)", y = "Secuencias", fill = "Veredicto") +
     ggplot2::theme_bw(base_size = 12)
-
   plotly::ggplotly(p_v) %>%
-    plotly::layout(
-      title = list(
-        text = "<b>Distribución de Votos Positivos Acumulados por Secuencia (0 a 7 Votos)</b>",
-        x = 0.5,
-        font = list(size = 14)
-      ),
-      margin = list(t = 65)
-    )
+    plotly::layout(title = list(text = "<b>Distribución de Votos Acumulados por Secuencia (0 a 7)</b>", x = 0.5), margin = list(t = 65))
 }
 ```
 
@@ -324,27 +166,14 @@ if (!is.null(df_consenso)) {
     }) %>%
       dplyr::bind_rows() %>%
       tidyr::pivot_longer(cols = c("TP_Positivos", "FP_Descartados"), names_to = "Decision", values_to = "Conteo")
-
     p_mod <- ggplot2::ggplot(df_voters, ggplot2::aes(x = reorder(Modelo, Conteo), y = Conteo, fill = Decision)) +
       ggplot2::geom_col(position = "dodge", width = 0.68) +
       ggplot2::coord_flip() +
       ggplot2::scale_fill_manual(values = c("TP_Positivos" = "#2980b9", "FP_Descartados" = "#95a5a6")) +
-      ggplot2::labs(
-        x = "Modelo Votante",
-        y = "Número de Secuencias",
-        fill = "Voto"
-      ) +
+      ggplot2::labs(x = "Modelo Votante", y = "Secuencias", fill = "Voto") +
       ggplot2::theme_bw(base_size = 12)
-
     plotly::ggplotly(p_mod) %>%
-      plotly::layout(
-        title = list(
-          text = "<b>Conteo de Votos Positivos (TP) y Negativos (FP) Emitidos por Cada Modelo</b>",
-          x = 0.5,
-          font = list(size = 14)
-        ),
-        margin = list(t = 65)
-      )
+      plotly::layout(title = list(text = "<b>Conteo de Votos Emitidos por Cada Modelo</b>", x = 0.5), margin = list(t = 65))
   }
 }
 ```
@@ -358,75 +187,48 @@ if (!is.null(df_consenso)) {
       grep("^Pred_", colnames(df_consenso), value = TRUE), "Votos_TP", "Proporcion_Acuerdo", "Veredicto_Consenso"),
     colnames(df_consenso)
   )
-  make_export_dt(
-    df_consenso[, cols_show, drop = FALSE],
-    caption_txt = "Tabla completa de votación de los 7 modelos por secuencia (Copiar, CSV, Excel)"
-  )
+  make_export_dt(df_consenso[, cols_show, drop = FALSE], caption_txt = "Votación de los 7 modelos por secuencia")
 }
 ```
 
 :::
 
-## Clasificación de Copias Génicas y Regla de Cobertura
+## Regla de Cobertura y Calibración Empírica (`30%` a `80%`)
 
-Para reducir el riesgo de que un gen partido en varios contigs se cuente como varias copias, las secuencias aceptadas como `Homologo_Valido` se ordenan de mayor a menor cobertura (`pct_recovered`) dentro de cada muestra y locus, y se clasifican con una regla de un solo umbral:
-
-<div class="rule-box">
-
-- **`Copia_Principal`:** primera secuencia (mayor cobertura) del locus en la muestra. Se cuenta siempre, como evidencia de presencia del locus, sin umbral de cobertura.
-- **`Homologo_Confirmado`:** secuencia adicional con cobertura individual $\ge 50\%$. Se cuenta como una copia adicional en la matriz de CNV.
-- **`No_Contado`:** secuencia adicional con cobertura $< 50\%$. No se cuenta, porque un fragmento corto por sí solo no permite distinguir entre una porción de la copia principal partida por el ensamblador y una copia adicional incompleta.
-
-El número de copias estimado por locus y muestra es `Copia_Principal + Homologo_Confirmado`.
-
-</div>
+Para controlar la sobrestimación por contigs fragmentados, las secuencias `Homologo_Valido` se ordenan por cobertura descendente (`pct_recovered`) dentro de cada muestra y ortogrupo: la primera secuencia se registra como `Copia_Principal`, los hits adicionales con `pct_recovered >= cov_threshold` se contabilizan como `Homologo_Confirmado`, y los fragmentos adicionales por debajo del umbral quedan como `No_Contado`.
 
 <div class="note-box">
-
-**Nota de interpretación.** El umbral de 50% es una heurística no calibrada empíricamente y determina directamente la matriz de CNV. La regla es conservadora: puede subestimar el número de copias cuando una copia adicional solo se recupera en fragmentos menores al 50%. Tampoco distingue dos fragmentos complementarios de un mismo gen, cada uno con más de 50%, de dos copias reales, porque usa el porcentaje recuperado y no las coordenadas alineadas en la referencia. Además, los contigs de baja cobertura pueden haber sido descartados antes por el consenso de modelos. La matriz es, por tanto, una estimación condicionada al clasificador y sin validación independiente.
-
+**Alcance e interpretación de la regla de cobertura.** La curva de sensibilidad incluida a continuación evalúa empíricamente la estabilidad del conteo de copias entre $30\%$ y $80\%$ (con calibración frente a $\text{CNV}^{\text{real}}_{\text{OG}}$ cuando existen etiquetas espaciales o conteos de referencia). Aun con dicha calibración, dos fragmentos no solapantes de un mismo gen que superen individualmente el umbral podrían contabilizarse por separado cuando no se dispone de coordenadas de alineamiento sobre el exón o dominio específico de la sonda.
 </div>
 
 ::: {.panel-tabset}
 
-### Gráfico de Copias Estimadas
+### Sensibilidad de `--cov_threshold` (`30%`–`80%`)
+
+```{r plot_cov_sensitivity, fig.width=8.2, fig.height=4.8}
+if (!is.null(df_sens) && nrow(df_sens) > 0) {
+  plot_cnv_threshold_sensitivity(df_sens, active_threshold = cov_thr)
+} else {
+  cat("> *No se encontró `cnv_threshold_sensitivity.tsv`.*\n")
+}
+```
+
+### Copias Estimadas por Muestra
 
 ```{r plot_copy_classes}
 if (!is.null(df_anotado) && "Clasificacion_Copia" %in% colnames(df_anotado)) {
   df_c <- df_anotado %>%
     dplyr::filter(Clasificacion_Copia %in% c("Copia_Principal", "Homologo_Confirmado")) %>%
-    dplyr::mutate(
-      Clasificacion_Copia = factor(Clasificacion_Copia, levels = c("Copia_Principal", "Homologo_Confirmado"))
-    ) %>%
+    dplyr::mutate(Clasificacion_Copia = factor(Clasificacion_Copia, levels = c("Copia_Principal", "Homologo_Confirmado"))) %>%
     dplyr::count(Sample, Clasificacion_Copia, name = "Copias")
-
   p_c <- ggplot2::ggplot(df_c, ggplot2::aes(x = Sample, y = Copias, fill = Clasificacion_Copia)) +
     ggplot2::geom_col(position = "stack", width = 0.65) +
-    ggplot2::scale_fill_manual(
-      values = c(
-        "Copia_Principal" = "#2980b9",
-        "Homologo_Confirmado" = "#27ae60"
-      )
-    ) +
-    ggplot2::labs(
-      x = "Muestra",
-      y = "Número de copias estimadas",
-      fill = "Clasificación de Copia"
-    ) +
+    ggplot2::scale_fill_manual(values = c("Copia_Principal" = "#2980b9", "Homologo_Confirmado" = "#27ae60")) +
+    ggplot2::labs(x = "Muestra", y = "Copias Estimadas", fill = "Clasificación") +
     ggplot2::theme_bw(base_size = 12) +
     ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
-
   plotly::ggplotly(p_c) %>%
-    plotly::layout(
-      title = list(
-        text = "<b>Copias estimadas por muestra: Copia Principal y Homólogos Confirmados</b>",
-        x = 0.5,
-        font = list(size = 14)
-      ),
-      margin = list(t = 65)
-    )
-} else {
-  cat("> *No se encontró el archivo `cnv_annotated_sequences.tsv`.*\n")
+    plotly::layout(title = list(text = "<b>Copia Principal y Homólogos Confirmados por Muestra</b>", x = 0.5), margin = list(t = 65))
 }
 ```
 
@@ -435,95 +237,51 @@ if (!is.null(df_anotado) && "Clasificacion_Copia" %in% colnames(df_anotado)) {
 ```{r table_annotated}
 if (!is.null(df_anotado)) {
   cols_ann <- intersect(
-    c("Sample", "Locus_Ortogrupo", "ID_Secuencia", "pct_recovered",
-      "pct_identity", "score", "wscore", "Votos_TP", "Clasificacion_Copia"),
+    c("Sample", "Locus_Ortogrupo", "ID_Secuencia", "pct_recovered", "pct_identity", "score", "wscore", "Votos_TP", "Clasificacion_Copia"),
     colnames(df_anotado)
   )
-  make_export_dt(
-    df_anotado[, cols_ann, drop = FALSE],
-    caption_txt = "Secuencias aceptadas como Homologo_Valido clasificadas en Copia_Principal, Homologo_Confirmado y No_Contado"
-  )
+  make_export_dt(df_anotado[, cols_ann, drop = FALSE], caption_txt = "Clasificación de copias por secuencia válida")
 }
 ```
 
-### Catálogo de copias estimadas
+### Tabla de Sensibilidad y Concordancia
 
-```{r table_functional}
-if (!is.null(df_funcionales) && nrow(df_funcionales) > 0) {
-  cols_f <- intersect(
-    c("Sample", "Locus_Ortogrupo", "ID_Secuencia", "pct_recovered",
-      "pct_identity", "score", "wscore", "Clasificacion_Copia"),
-    colnames(df_funcionales)
-  )
-  make_export_dt(
-    df_funcionales[, cols_f, drop = FALSE],
-    caption_txt = "Catálogo de copias estimadas (Copia_Principal + Homologo_Confirmado)"
-  )
-} else if (!is.null(df_anotado)) {
-  df_f_sub <- df_anotado %>%
-    dplyr::filter(Clasificacion_Copia %in% c("Copia_Principal", "Homologo_Confirmado"))
-  cols_f <- intersect(
-    c("Sample", "Locus_Ortogrupo", "ID_Secuencia", "pct_recovered",
-      "pct_identity", "score", "wscore", "Clasificacion_Copia"),
-    colnames(df_f_sub)
-  )
-  make_export_dt(
-    df_f_sub[, cols_f, drop = FALSE],
-    caption_txt = "Catálogo de copias estimadas (Copia_Principal + Homologo_Confirmado)"
-  )
+```{r table_sens_and_conc}
+if (!is.null(df_conc) && nrow(df_conc) > 0) {
+  make_export_dt(df_conc, caption_txt = "Concordancia de número de copias a nivel de ortogrupo (Spearman rho, Kappa cuadrático ponderado, RMSE y concordancia exacta)", page_len = 10)
+} else if (!is.null(df_sens) && nrow(df_sens) > 0) {
+  make_export_dt(df_sens, caption_txt = "Barrido de sensibilidad del parámetro --cov_threshold (30% a 80%)", page_len = 15)
 }
 ```
 
 :::
 
-## Matriz Final de Variación en el Número de Copias (CNV) y Mapa de Calor
-
-La matriz `cnv_matrix.tsv` consolida el número de copias estimadas (`Copia_Principal` + `Homologo_Confirmado`) por locus/ortogrupo (filas) y muestra biológica (columnas).
+## Matriz Final de CNV y Mapa de Calor
 
 ::: {.panel-tabset}
 
-### Mapa de Calor Interactivo (Top Loci)
+### Mapa de Calor Interactivo (Top Ortogrupos)
 
 ```{r plot_heatmap_interactive}
 if (!is.null(df_anotado) && nrow(df_anotado) > 0 && exists("plot_cnv_heatmap")) {
-  p_hm <- plot_cnv_heatmap(
-    df_cnv_annotated = df_anotado,
-    sample_col = "Sample",
-    locus_col = "Locus_Ortogrupo",
-    top_n_loci = top_n_loci
-  )
+  p_hm <- plot_cnv_heatmap(df_cnv_annotated = df_anotado, sample_col = "Sample", locus_col = "Locus_Ortogrupo", top_n_loci = top_n_loci)
   n_loci_plot <- min(top_n_loci, length(unique(df_anotado$Locus_Ortogrupo)))
-  plotly::ggplotly(p_hm, height = max(500, n_loci_plot * 26 + 150)) %>%
-    plotly::layout(margin = list(t = 65))
-} else if (!is.null(df_matriz_cnv) && nrow(df_matriz_cnv) > 0 && exists("plot_cnv_heatmap")) {
-  p_hm <- plot_cnv_heatmap(
-    df_cnv_annotated = df_matriz_cnv,
-    locus_col = colnames(df_matriz_cnv)[1],
-    top_n_loci = top_n_loci
-  )
-  plotly::ggplotly(p_hm, height = 600) %>%
-    plotly::layout(margin = list(t = 65))
-} else {
-  cat("> *No hay datos suficientes para generar el mapa de calor de CNV.*\n")
+  plotly::ggplotly(p_hm, height = max(500, n_loci_plot * 26 + 150)) %>% plotly::layout(margin = list(t = 65))
 }
 ```
 
-### Matriz de CNV Completa Exportable (`cnv_matrix.tsv`)
+### Matriz de CNV Completa (`cnv_matrix.tsv`)
 
 ```{r table_cnv_matrix}
 if (!is.null(df_matriz_cnv) && nrow(df_matriz_cnv) > 0) {
   sample_cols <- setdiff(colnames(df_matriz_cnv), colnames(df_matriz_cnv)[1])
-  df_mat_ord <- df_matriz_cnv
+  df_mat_ord  <- df_matriz_cnv
   if (length(sample_cols) > 0) {
-    df_mat_ord$Total_Copias <- rowSums(df_mat_ord[, sample_cols, drop = FALSE], na.rm = TRUE)
+    df_mat_ord$Total_Copias       <- rowSums(df_mat_ord[, sample_cols, drop = FALSE], na.rm = TRUE)
     df_mat_ord$Max_Copias_Muestra <- apply(df_mat_ord[, sample_cols, drop = FALSE], 1, max, na.rm = TRUE)
     df_mat_ord <- df_mat_ord %>% dplyr::arrange(dplyr::desc(Max_Copias_Muestra), dplyr::desc(Total_Copias))
   }
-  dt_mat <- make_export_dt(
-    df_mat_ord,
-    caption_txt = "Matriz de Copias Estimadas por Locus y Muestra (Copiar, CSV, Excel)",
-    page_len = 30
-  )
+  dt_mat <- make_export_dt(df_mat_ord, caption_txt = "Matriz de copias estimadas por ortogrupo y muestra", page_len = 30)
   if (length(sample_cols) > 0) {
     dt_mat <- dt_mat %>%
       DT::formatStyle(
@@ -533,25 +291,19 @@ if (!is.null(df_matriz_cnv) && nrow(df_matriz_cnv) > 0) {
       )
   }
   dt_mat
-} else {
-  cat("> *No se encontró el archivo `cnv_matrix.tsv`.*\n")
 }
 ```
 
 :::
 
-```{r transferability_section, results='asis'}
+```{r transferability_section, results="asis"}
 if (!is.null(df_transfer) && nrow(df_transfer) > 0) {
-  cat("\n## Evaluación de Transferibilidad entre Especies\n\n")
-  cat("Dado que el archivo de entrada incluye la columna de referencia `Validacion_Espacial`, se calculó automáticamente el rendimiento de los 7 modelos y del Consenso sobre este conjunto:\n\n")
+  cat("\n## Métricas de Clasificación frente a Etiquetas Espaciales\n\n")
 }
 ```
 
 ```{r transferability_table}
 if (!is.null(df_transfer) && nrow(df_transfer) > 0) {
-  make_export_dt(
-    df_transfer,
-    caption_txt = "Rendimiento de Transferibilidad Filogenética (transferability_benchmark.tsv)"
-  )
+  make_export_dt(df_transfer, caption_txt = "Rendimiento de clasificación a nivel de secuencia (transferability_benchmark.tsv)")
 }
 ```

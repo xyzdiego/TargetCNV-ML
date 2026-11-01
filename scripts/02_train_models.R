@@ -1,9 +1,7 @@
 #!/usr/bin/env Rscript
 
-# ==============================================================================
-# TargetCNV-ML Pipeline
-# Script 02: Model Training (Full 18-Model Tournament + Stacking + Youden + SHAP)
-# ==============================================================================
+# Módulo 02: Diagnóstico de colinealidad, entrenamiento supervisado con validación
+# cruzada determinista, optimización de umbrales de Youden y explicabilidad KernelSHAP
 
 t_start <- Sys.time()
 
@@ -11,6 +9,7 @@ suppressPackageStartupMessages({
   library(optparse)
   library(dplyr)
   library(tidyr)
+  library(ggplot2)
   library(caret)
   library(pROC)
 })
@@ -27,10 +26,11 @@ get_project_root <- function() {
 }
 
 project_root <- get_project_root()
-if (file.exists(file.path(project_root, "R", "model_specs.R"))) source(file.path(project_root, "R", "model_specs.R"))
+source(file.path(project_root, "R", "model_specs.R"))
 source(file.path(project_root, "R", "model_evaluation.R"))
 source(file.path(project_root, "R", "data_processing.R"))
 source(file.path(project_root, "R", "plotting.R"))
+source(file.path(project_root, "R", "report_helpers.R"))
 
 option_list <- list(
   make_option(
@@ -50,8 +50,8 @@ option_list <- list(
   make_option(
     c("-k", "--cv_folds"),
     type = "integer",
-    default = 5,
-    help = "Numero de particiones (folds) para validacion cruzada k-fold [Por defecto: 5]",
+    default = 5L,
+    help = "Número de particiones (folds) para validación cruzada k-fold [Por defecto: 5]",
     metavar = "INT"
   ),
   make_option(
@@ -64,40 +64,40 @@ option_list <- list(
   make_option(
     c("--seed"),
     type = "integer",
-    default = 1234,
-    help = "Semilla de reproducibilidad estocastica [Por defecto: 1234]",
+    default = 1234L,
+    help = "Semilla maestra para particiones y semillas explícitas de caret [Por defecto: 1234]",
     metavar = "INT"
   ),
   make_option(
     c("-c", "--cores"),
     type = "integer",
-    default = max(1, parallel::detectCores() - 1),
-    help = "Numero de hilos para entrenamiento paralelo [Por defecto: cores - 1]",
+    default = max(1L, parallel::detectCores() - 1L),
+    help = "Número de hilos para entrenamiento paralelo [Por defecto: cores - 1]",
     metavar = "INT"
   ),
   make_option(
     c("--include_hit"),
     action = "store_true",
     default = FALSE,
-    help = "Incluir el indice 'hit' de CAPTUS como predictor continuo"
+    help = "Incluir el índice ordinal 'hit' de CAPTUS como predictor continuo adicional"
   ),
   make_option(
     c("--extended_tournament"),
     action = "store_true",
     default = TRUE,
-    help = "Ejecutar el torneo completo de 18 algoritmos del torneo completo [Por defecto: TRUE]"
+    help = "Ejecutar la comparación completa de 18 clasificadores supervisados [Por defecto: TRUE]"
   ),
   make_option(
     c("--fast_tournament"),
     action = "store_false",
     dest = "extended_tournament",
-    help = "Entrenar solo los 5 modelos rapidos principales (ElasticNet, NaiveBayes, SVM_Polinomial, Red_Neuronal, LDA)"
+    help = "Entrenar únicamente los 5 clasificadores base rápidos (ElasticNet, NaiveBayes, SVM_Polinomial, Red_Neuronal, LDA)"
   ),
   make_option(
     c("--train_stacking"),
     action = "store_true",
     default = TRUE,
-    help = "Entrenar meta-modelo GLM Stacking (caretEnsemble) combinando los mejores modelos base [Por defecto: TRUE]"
+    help = "Entrenar meta-modelo GLM Stacking (caretEnsemble) sobre los dos mejores clasificadores base [Por defecto: TRUE]"
   ),
   make_option(
     c("--no_stacking"),
@@ -109,32 +109,32 @@ option_list <- list(
     c("--clean_models"),
     action = "store_true",
     default = FALSE,
-    help = "Limpiar los archivos .rds/.tsv previos en --out_models antes de guardar la nueva corrida [Por defecto: FALSE]"
+    help = "Eliminar archivos .rds/.tsv previos en --out_models antes de escribir la corrida actual [Por defecto: FALSE]"
   ),
   make_option(
     c("--render_report"),
     action = "store_true",
     default = TRUE,
-    help = "Compilar automaticamente el reporte HTML interactivo tras el entrenamiento [Por defecto: TRUE]"
+    help = "Compilar el reporte HTML de entrenamiento (training_report.qmd) en modo de solo lectura [Por defecto: TRUE]"
   ),
   make_option(
     c("--no_render_report"),
     action = "store_false",
     dest = "render_report",
-    help = "Omitir la compilacion del reporte HTML interactivo"
+    help = "Omitir la compilación del reporte HTML"
   ),
   make_option(
     c("-r", "--report_file"),
     type = "character",
-    default = file.path(project_root, "reporte_entrenamiento.html"),
-    help = "Ruta del reporte HTML de salida [Por defecto: reporte_entrenamiento.html en la raiz del proyecto]",
+    default = file.path(project_root, "reports", "reporte_entrenamiento.html"),
+    help = "Ruta del reporte HTML de salida [Por defecto: reports/reporte_entrenamiento.html]",
     metavar = "FILE"
   ),
   make_option(
     c("--sources"),
     type = "character",
     default = "",
-    help = "Ruta opcional al archivo TSV con las citas de fuentes genomicas y de homologia para el reporte HTML",
+    help = "Ruta opcional al archivo TSV con citas de fuentes genómicas y de homología",
     metavar = "FILE"
   )
 )
@@ -142,7 +142,7 @@ option_list <- list(
 opt_parser <- OptionParser(
   usage = "Uso: %prog [opciones]",
   option_list = option_list,
-  description = "Entrena todos los modelos supervisados del torneo completo (RF, GBM, XGBoost, SVM Radial/Lineal/Polinomial, NNet, Bagged NNet, ElasticNet, KNN, CART, NaiveBayes, LDA, DNN/MLP, QDA, Treebag, Stacking), optimiza Youden y genera el reporte HTML."
+  description = "Evalúa colinealidad de Spearman, optimiza cortes univariados de Youden y el ensamble heurístico, entrena los clasificadores supervisados con semillas deterministas en validación cruzada y compila el reporte HTML."
 )
 
 opt <- parse_args(opt_parser)
@@ -153,7 +153,7 @@ if (is.null(opt$data) || !file.exists(opt$data)) {
     opt$data <- tsv_fallback
   } else {
     print_help(opt_parser)
-    stop(sprintf("[ERROR] No se encontro el archivo de datos preparados: %s", opt$data), call. = FALSE)
+    stop(sprintf("[ERROR] No se encontró el archivo de datos preparados: %s", opt$data), call. = FALSE)
   }
 }
 
@@ -164,30 +164,30 @@ if (!dir.exists(opt$out_models)) {
 if (!opt$sampling %in% c("down", "up", "none")) {
   stop(sprintf("[ERROR] --sampling debe ser 'down', 'up' o 'none' (recibido: '%s').", opt$sampling), call. = FALSE)
 }
-if (is.na(opt$cv_folds) || opt$cv_folds < 2) {
+if (is.na(opt$cv_folds) || opt$cv_folds < 2L) {
   stop("[ERROR] --cv_folds debe ser un entero >= 2.", call. = FALSE)
 }
-if (is.na(opt$cores) || opt$cores < 1) {
+if (is.na(opt$cores) || opt$cores < 1L) {
   stop("[ERROR] --cores debe ser un entero >= 1.", call. = FALSE)
 }
 
 cat("========================================================\n")
-cat(" TargetCNV-ML: Modulo 02 - Entrenamiento y Validacion Cruzada  \n")
+cat(" TargetCNV-ML: Módulo 02 - Entrenamiento y Validación Cruzada\n")
 cat("========================================================\n")
 cat(sprintf("Archivo de datos          : %s\n", opt$data))
 cat(sprintf("Directorio modelos (.rds) : %s\n", opt$out_models))
 cat(sprintf("Folds CV                  : %d\n", opt$cv_folds))
 cat(sprintf("Balanceo de Clases        : %s\n", opt$sampling))
-cat(sprintf("Torneo de Modelos         : %s\n", if (opt$extended_tournament) "Completo (18 algoritmos ML)" else "Rapido (5 algoritmos ML)"))
+cat(sprintf("Esquema de Modelos        : %s\n", if (opt$extended_tournament) "Completo (18 clasificadores ML)" else "Rápido (5 clasificadores ML)"))
 cat(sprintf("Meta-Modelo Stacking      : %s\n", if (opt$train_stacking) "SI" else "NO"))
-cat(sprintf("Cores Paralelos           : %d\n", opt$cores))
-cat(sprintf("Semilla                   : %d\n", opt$seed))
+cat(sprintf("Núcleos Paralelos         : %d\n", opt$cores))
+cat(sprintf("Semilla Determinista      : %d\n", opt$seed))
 cat(sprintf("Compilar Reporte HTML     : %s\n", if (opt$render_report) "SI" else "NO"))
 if (opt$render_report) cat(sprintf("Reporte HTML de salida    : %s\n", opt$report_file))
 cat("--------------------------------------------------------\n")
 
-# 1. Carga de datos
-cat("[1/7] Cargando datos preparados...\n")
+# 1. Carga y verificación de datos preparados
+cat("[1/8] Cargando datos preparados...\n")
 if (grepl("\\.rds$", opt$data, ignore.case = TRUE)) {
   datos_raw <- readRDS(opt$data)
 } else {
@@ -200,7 +200,7 @@ predictores <- if (opt$include_hit && "hit" %in% colnames(datos_raw)) c(metricas
 columnas_faltantes <- setdiff(c("Validacion_Espacial", predictores), colnames(datos_raw))
 if (length(columnas_faltantes) > 0) {
   stop(sprintf(
-    "[ERROR] El archivo de datos no contiene las columnas requeridas: %s.\n Genere el archivo con scripts/01_prepare_data.R",
+    "[ERROR] El archivo de datos no contiene las columnas requeridas: %s.\nGenere el archivo con scripts/01_prepare_data.R",
     paste(columnas_faltantes, collapse = ", ")
   ), call. = FALSE)
 }
@@ -218,30 +218,41 @@ df_ml <- datos_raw %>%
   stats::na.omit() %>%
   as.data.frame()
 
-cat(sprintf("   -> Muestras validas: %d (TP = %d, FP = %d)\n",
+cat(sprintf("   -> Secuencias válidas: %d (TP = %d, FP = %d)\n",
             nrow(df_ml), sum(df_ml$Clase == "TP"), sum(df_ml$Clase == "FP")))
 
 if (min(table(df_ml$Clase)) < opt$cv_folds) {
   stop(sprintf(
-    "[ERROR] La clase minoritaria tiene %d muestras (< %d folds). Se requieren TP y FP suficientes en el archivo de datos.\n",
+    "[ERROR] La clase minoritaria tiene %d muestras (< %d folds). Se requieren suficientes registros TP y FP.\n",
     min(table(df_ml$Clase)), opt$cv_folds
   ), call. = FALSE)
 }
 
-# 2. Evaluacion de Cortes Univariados Youden
-cat("[2/7] Calculando umbrales univariados optimos de Youden...\n")
+# 2. Test de colinealidad por rangos de Spearman entre predictores continuos
+cat("[2/8] Evaluando colinealidad de Spearman entre predictores...\n")
+spearman_res <- compute_spearman_collinearity(df_ml, metric_cols = predictores)
+print(
+  spearman_res$pairs %>%
+    dplyr::mutate(
+      Spearman_Rho = round(Spearman_Rho, 4),
+      P_Valor = signif(P_Valor, 3)
+    ),
+  row.names = FALSE
+)
+
+# 3. Evaluación de cortes univariados óptimos de Youden
+cat("[3/8] Calculando umbrales univariados óptimos de Youden...\n")
 youden_eval <- evaluate_youden_predictors(
   df = df_ml,
   response_col = "Clase",
   metric_cols = metricas_base,
   positive_class = "TP"
 )
-saveRDS(youden_eval$thresholds, file = file.path(opt$out_models, "youden_thresholds.rds"))
 cat("   -> Umbrales optimizados:\n")
 print(round(youden_eval$thresholds, 2))
 
-# 3. Optimizacion de Ensamble Heuristico Ponderado
-cat("[3/7] Optimizando ensamble heuristico (voto ponderado)...\n")
+# 4. Optimización del ensamble heurístico ponderado
+cat("[4/8] Optimizando ensamble heurístico de votación ponderada...\n")
 heuristic_res <- optimize_weighted_heuristic(
   df_votes = youden_eval$binary_votes,
   response = df_ml$Clase,
@@ -254,49 +265,62 @@ heuristic_obj <- list(
   thresholds = youden_eval$thresholds,
   best_auc = heuristic_res$best_auc
 )
-saveRDS(heuristic_obj, file = file.path(opt$out_models, "heuristic_model.rds"))
-cat("   -> Pesos heuristicos optimizados:\n")
+cat("   -> Pesos heurísticos optimizados:\n")
 print(heuristic_res$weights)
 cat(sprintf("   -> Umbral global: %.2f | AUC: %.4f\n", heuristic_res$global_threshold, heuristic_res$best_auc))
 
-# 4. Configuracion de Paralelizacion
+# Configuración de clúster paralelo PSOCK (independiente de la semilla determinista por fold)
 cl <- NULL
-if (opt$cores > 1) {
+if (opt$cores > 1L) {
   suppressPackageStartupMessages(library(doParallel))
   cl <- parallel::makeCluster(opt$cores)
   doParallel::registerDoParallel(cl)
 }
 
-# 5. Especificacion Programatica de Modelos desde R/model_specs.R
 model_specs <- get_model_specs(n_obs = nrow(df_ml), extended = opt$extended_tournament)
-
-x_train <- df_ml[, predictores, drop = FALSE]
+x_train <- as.data.frame(df_ml[, predictores, drop = FALSE])
 y_train <- df_ml$Clase
 
 train_tournament <- function(control_obj, scenario_label) {
   mods <- list()
   rows <- list()
   cms  <- list()
+  shared_index    <- NULL
+  shared_indexOut <- NULL
 
   for (mod_name in names(model_specs)) {
     spec <- model_specs[[mod_name]]
-    cat(sprintf("   [%s] Entrenando: %-18s ... ", scenario_label, mod_name))
+    cat(sprintf("   [%s] Entrenando: %-25s ... ", scenario_label, mod_name))
+
+    pre_proc <- if (is.null(spec$no_scale) || !spec$no_scale) c("center", "scale") else NULL
+    det_ctrl <- build_deterministic_cv_control(
+      base_ctrl = control_obj,
+      x = x_train,
+      y = y_train,
+      method = spec$method,
+      tuneGrid = spec$tuneGrid,
+      tuneLength = spec$tuneLength,
+      preProcess = pre_proc,
+      seed = opt$seed
+    )
+    if (is.null(shared_index)) {
+      shared_index    <- det_ctrl$trControl$index
+      shared_indexOut <- det_ctrl$trControl$indexOut
+    }
+
     args_train <- list(
       x = x_train,
       y = y_train,
       method = spec$method,
-      trControl = control_obj,
+      trControl = det_ctrl$trControl,
+      tuneGrid = det_ctrl$tuneGrid,
       metric = "ROC"
     )
-    if (is.null(spec$no_scale) || !spec$no_scale) {
-      args_train$preProcess <- c("center", "scale")
-    }
-    if (!is.null(spec$tuneLength)) args_train$tuneLength <- spec$tuneLength
-    if (!is.null(spec$tuneGrid))   args_train$tuneGrid   <- spec$tuneGrid
-    if (!is.null(spec$trace))      args_train$trace      <- spec$trace
-    if (!is.null(spec$MaxNWts))    args_train$MaxNWts    <- spec$MaxNWts
-    if (!is.null(spec$verbose))    args_train$verbose    <- spec$verbose
-    if (!is.null(spec$nthread))    args_train$nthread    <- spec$nthread
+    if (!is.null(pre_proc))         args_train$preProcess <- pre_proc
+    if (!is.null(spec$trace))       args_train$trace      <- spec$trace
+    if (!is.null(spec$MaxNWts))     args_train$MaxNWts    <- spec$MaxNWts
+    if (!is.null(spec$verbose))     args_train$verbose    <- spec$verbose
+    if (!is.null(spec$nthread))     args_train$nthread    <- spec$nthread
 
     set.seed(opt$seed)
     err_msg <- NULL
@@ -309,6 +333,7 @@ train_tournament <- function(control_obj, scenario_label) {
         NULL
       })
     }, type = "output"))
+
     if (is.null(mod_fit) && !is.null(err_msg)) {
       cat(sprintf("[OMITIDO: %s]\n", err_msg))
     }
@@ -330,42 +355,53 @@ train_tournament <- function(control_obj, scenario_label) {
           Referencia = factor(pred_cv$obs,  levels = c("TP", "FP"))
         )
       }
-      cat("OK!\n")
+      cat("OK\n")
     }
   }
 
-  # Meta-Modelo GLM Stacking (caretEnsemble) para el escenario actual
-  if (opt$train_stacking && length(mods) >= 2 && requireNamespace("caretEnsemble", quietly = TRUE)) {
-    cat(sprintf("   [%s] Entrenando: %-18s ... ", scenario_label, "Ensamble_Stacking"))
+  # Meta-modelo GLM Stacking con predicciones fuera de muestra alineadas y semillas explícitas
+  if (opt$train_stacking && length(mods) >= 2L && requireNamespace("caretEnsemble", quietly = TRUE)) {
+    cat(sprintf("   [%s] Entrenando: %-25s ... ", scenario_label, "Ensamble_Stacking"))
     tryCatch({
-      bench_tmp <- dplyr::bind_rows(rows) %>% dplyr::arrange(dplyr::desc(ROC_AUC))
-      top2_names <- utils::head(bench_tmp$Modelo, 2)
-      lista_top <- mods[top2_names]
+      bench_tmp  <- dplyr::bind_rows(rows) %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))
+      top2_names <- utils::head(bench_tmp$Modelo, 2L)
+      lista_top  <- mods[top2_names]
       class(lista_top) <- c("caretList", "list")
+
+      stack_base_ctrl <- caret::trainControl(
+        method = "cv",
+        number = opt$cv_folds,
+        index = shared_index,
+        indexOut = shared_indexOut,
+        savePredictions = "final",
+        classProbs = TRUE,
+        allowParallel = (opt$cores > 1L),
+        summaryFunction = caret::twoClassSummary
+      )
+      dummy_meta_x <- as.data.frame(matrix(0.5, nrow = nrow(x_train), ncol = length(top2_names)))
+      colnames(dummy_meta_x) <- top2_names
+      det_stack <- build_deterministic_cv_control(
+        base_ctrl = stack_base_ctrl,
+        x = dummy_meta_x,
+        y = y_train,
+        method = "glm",
+        tuneLength = 1L,
+        seed = opt$seed
+      )
+
       set.seed(opt$seed)
       ens_stack <- suppressWarnings(suppressMessages(
         caretEnsemble::caretStack(
           lista_top,
           method = "glm",
           metric = "ROC",
-          trControl = caret::trainControl(
-            method = "cv",
-            number = opt$cv_folds,
-            index = control_obj$index,
-            savePredictions = "final",
-            classProbs = TRUE,
-            summaryFunction = caret::twoClassSummary
-          )
+          trControl = det_stack$trControl
         )
       ))
       mods[["Ensamble_Stacking"]] <- ens_stack
 
-      prob_base_list <- lapply(lista_top, function(m) stats::predict(m, newdata = x_train, type = "prob")[["TP"]])
-      df_prob_base <- as.data.frame(prob_base_list)
-      colnames(df_prob_base) <- top2_names
-      probs_stack <- stats::predict(ens_stack$ens_model, newdata = df_prob_base, type = "prob")[["TP"]]
+      probs_stack <- predict_stacking_probs(ens_stack, newdata = x_train)
       preds_stack <- factor(ifelse(probs_stack >= 0.5, "TP", "FP"), levels = c("TP", "FP"))
-
       rows[["Ensamble_Stacking"]] <- compute_classification_metrics(
         pred = preds_stack,
         obs = y_train,
@@ -374,61 +410,60 @@ train_tournament <- function(control_obj, scenario_label) {
         model_name = "Ensamble_Stacking"
       )
       cms[["Ensamble_Stacking"]] <- table(Prediccion = preds_stack, Referencia = y_train)
-      cat(sprintf("OK! (%s)\n", paste(top2_names, collapse = " + ")))
+      cat(sprintf("OK (%s)\n", paste(top2_names, collapse = " + ")))
     }, error = function(e) {
       cat(sprintf("[OMITIDO: %s]\n", e$message))
     })
   }
 
-  return(list(models = mods, benchmark = dplyr::bind_rows(rows), cms = cms))
+  list(models = mods, benchmark = dplyr::bind_rows(rows), cms = cms)
 }
 
-# 5A. Entrenar Escenario Desbalanceado (sin remuestreo, preservando exactamente la semilla 1234)
-cat("[4/7] Entrenando torneo de modelos (Escenario Desbalanceado)...\n")
+# 5A. Escenario Desbalanceado (distribución natural de clases)
+cat("[5/8] Entrenando clasificadores supervisados (Escenario Desbalanceado)...\n")
 fit_control_unbal <- caret::trainControl(
   method = "cv",
   number = opt$cv_folds,
   classProbs = TRUE,
   summaryFunction = caret::twoClassSummary,
-  allowParallel = (opt$cores > 1),
+  allowParallel = (opt$cores > 1L),
   savePredictions = "final",
   sampling = NULL
 )
 res_unbal <- train_tournament(fit_control_unbal, "Desbalanceado")
 
-# 5B. Entrenar Escenario Balanceado (respeta --sampling down, up o none y preserva la semilla 1234)
-cat("[5/7] Entrenando torneo de modelos (Escenario Balanceado)...\n")
+# 5B. Escenario Balanceado (submuestreo/sobremuestreo dentro de cada fold de CV)
+cat("[6/8] Entrenando clasificadores supervisados (Escenario Balanceado)...\n")
 if (opt$sampling == "none") {
-  warning("[02_train_models.R] Se especifico --sampling none: el escenario balanceado se entrenara sin remuestreo.", call. = FALSE)
+  warning("[02_train_models.R] Se especificó --sampling none: el escenario balanceado se entrenará sin remuestreo.", call. = FALSE)
 }
 fit_control_bal <- caret::trainControl(
   method = "cv",
   number = opt$cv_folds,
   classProbs = TRUE,
   summaryFunction = caret::twoClassSummary,
-  allowParallel = (opt$cores > 1),
+  allowParallel = (opt$cores > 1L),
   savePredictions = "final",
   sampling = if (opt$sampling != "none") opt$sampling else NULL
 )
 res_bal <- train_tournament(fit_control_bal, "Balanceado")
 
-# Liberar los workers paralelos una vez terminado el entrenamiento
-if (opt$cores > 1) {
+if (opt$cores > 1L && !is.null(cl)) {
   try(parallel::stopCluster(cl), silent = TRUE)
   foreach::registerDoSEQ()
 }
 
-# Consolidar tablas de benchmark con TODOS los modelos evaluados (Heuristico + Todos los ML + 4 Cortes Youden)
+# Consolidar tablas de benchmark completas
 df_benchmark_bal   <- dplyr::bind_rows(heuristic_res$benchmark_row, res_bal$benchmark, youden_eval$benchmark)
 df_benchmark_unbal <- dplyr::bind_rows(heuristic_res$benchmark_row, res_unbal$benchmark, youden_eval$benchmark)
 df_benchmark_all   <- dplyr::bind_rows(
-  dplyr::mutate(df_benchmark_bal,   Escenario = "Balanceado",   .before = 1),
+  dplyr::mutate(df_benchmark_bal,   Escenario = "Balanceado",    .before = 1),
   dplyr::mutate(df_benchmark_unbal, Escenario = "Desbalanceado", .before = 1)
 )
 
-# Si se indico --clean_models, limpiar artefactos previos en out_models; de lo contrario, conservar modelos previos no reentrenados en esta corrida
+# Gestión de artefactos previos antes de serializar los nuevos resultados
 if (isTRUE(opt$clean_models)) {
-  cat(sprintf("   [--clean_models] Limpiando archivos .rds y .tsv previos en %s...\n", opt$out_models))
+  cat(sprintf("   [--clean_models] Eliminando archivos .rds y .tsv previos en %s...\n", opt$out_models))
   old_files <- list.files(opt$out_models, pattern = "\\.(rds|tsv)$", full.names = TRUE)
   if (length(old_files) > 0) unlink(old_files)
 } else {
@@ -448,18 +483,29 @@ if (isTRUE(opt$clean_models)) {
   }
 }
 
-# Serializar contenedores y modelos individuales (actualizando los modelos entrenados en esta corrida)
+# Serializar colinealidad de Spearman, umbrales de Youden y modelo heurístico
+saveRDS(spearman_res, file = file.path(opt$out_models, "spearman_collinearity.rds"))
+utils::write.table(
+  spearman_res$pairs,
+  file = file.path(opt$out_models, "spearman_collinearity.tsv"),
+  sep = "\t", row.names = FALSE, quote = FALSE
+)
+
+saveRDS(youden_eval$thresholds, file = file.path(opt$out_models, "youden_thresholds.rds"))
+saveRDS(heuristic_obj,          file = file.path(opt$out_models, "heuristic_model.rds"))
+
+# Serializar contenedores de modelos y archivos individuales
 saveRDS(res_bal$models,   file = file.path(opt$out_models, "models_balanced.rds"))
 saveRDS(res_bal$models,   file = file.path(opt$out_models, "all_trained_models.rds"))
 saveRDS(res_unbal$models, file = file.path(opt$out_models, "models_unbalanced.rds"))
 
 for (mod_name in names(res_bal$models)) {
   safe_fn <- gsub("[^a-z0-9_]", "_", tolower(mod_name))
-  Safe_fn <- gsub("_+", "_", gsub("^_|_$", "", safe_fn))
-  saveRDS(res_bal$models[[mod_name]], file = file.path(opt$out_models, sprintf("model_%s.rds", Safe_fn)))
+  safe_fn <- gsub("_+", "_", gsub("^_|_$", "", safe_fn))
+  saveRDS(res_bal$models[[mod_name]], file = file.path(opt$out_models, sprintf("model_%s.rds", safe_fn)))
 }
 
-# Serializar benchmarks
+# Serializar tablas de benchmark
 saveRDS(df_benchmark_bal, file = file.path(opt$out_models, "benchmark_models_balanced.rds"))
 saveRDS(df_benchmark_bal, file = file.path(opt$out_models, "benchmark_models.rds"))
 utils::write.table(df_benchmark_bal, file = file.path(opt$out_models, "benchmark_models.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
@@ -470,14 +516,14 @@ utils::write.table(df_benchmark_unbal, file = file.path(opt$out_models, "benchma
 saveRDS(df_benchmark_all, file = file.path(opt$out_models, "benchmark_models_all.rds"))
 utils::write.table(df_benchmark_all, file = file.path(opt$out_models, "benchmark_models_all.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
 
-# Guardar metricas Youden detalladas
+# Serializar métricas detalladas de Youden
 df_youden_bench <- youden_eval$benchmark
 df_youden_bench$Umbral <- sapply(metricas_base, function(v) round(youden_eval$thresholds[[v]], 3))
 df_youden_bench$Indice_Youden_J <- df_youden_bench$Sensibilidad + df_youden_bench$Especificidad - 1
 saveRDS(df_youden_bench, file = file.path(opt$out_models, "youden_benchmark.rds"))
 utils::write.table(df_youden_bench, file = file.path(opt$out_models, "youden_benchmark.tsv"), sep = "\t", row.names = FALSE, quote = FALSE)
 
-# Consolidar matrices de confusion de todos los modelos evaluados
+# Consolidar matrices de confusión
 cm_youden <- list()
 for (var in metricas_base) {
   pred_y <- factor(ifelse(df_ml[[var]] >= youden_eval$thresholds[[var]], "TP", "FP"), levels = c("TP", "FP"))
@@ -496,9 +542,9 @@ confusion_matrices <- list(
 )
 saveRDS(confusion_matrices, file = file.path(opt$out_models, "confusion_matrices.rds"))
 
-# Guardar manifiesto de consenso y lista de predictores para 03_cnv_inference.R
+# Guardar especificación del sistema de consenso de 7 modelos
 pref_ml <- intersect(c("ElasticNet", "NaiveBayes", "SVM_Polinomial", "Red_Neuronal"), names(res_bal$models))
-if (length(pref_ml) < 4 && nrow(res_bal$benchmark) > 0) {
+if (length(pref_ml) < 4L && nrow(res_bal$benchmark) > 0) {
   ranked_ml <- res_bal$benchmark %>%
     dplyr::filter(Modelo != "Ensamble_Stacking") %>%
     dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)) %>%
@@ -506,25 +552,25 @@ if (length(pref_ml) < 4 && nrow(res_bal$benchmark) > 0) {
   pref_ml <- unique(c(pref_ml, ranked_ml))[seq_len(min(4L, length(unique(c(pref_ml, ranked_ml)))))]
 }
 consensus_spec <- list(
-  predictors = predictores,
+  predictors    = predictores,
   metricas_base = metricas_base,
-  ml_voters = pref_ml,
+  ml_voters     = pref_ml,
   youden_voters = c("pct_recovered", "pct_identity"),
-  n_voters = length(pref_ml) + 2L + 1L,
-  seed = opt$seed,
-  sampling = opt$sampling
+  n_voters      = length(pref_ml) + 2L + 1L,
+  seed          = opt$seed,
+  sampling      = opt$sampling
 )
 saveRDS(consensus_spec, file = file.path(opt$out_models, "consensus_spec.rds"))
 
-# 6. Explicabilidad SHAP (KernelSHAP para Escenario Balanceado y Desbalanceado)
-cat("[6/7] Generando explicaciones SHAP (Interpretabilidad con KernelSHAP)...\n")
+# 7. Explicabilidad con KernelSHAP
+cat("[7/8] Calculando descomposiciones aditivas SHAP (KernelSHAP)...\n")
 if ("ElasticNet" %in% names(res_bal$models) || "ElasticNet" %in% names(res_unbal$models)) {
   suppressPackageStartupMessages({
     library(kernelshap)
     library(shapviz)
   })
   set.seed(opt$seed)
-  bg_idx <- sample(seq_len(nrow(x_train)), min(30, nrow(x_train)))
+  bg_idx <- sample(seq_len(nrow(x_train)), min(30L, nrow(x_train)))
 
   if ("ElasticNet" %in% names(res_bal$models)) {
     shap_calc_bal <- tryCatch({
@@ -532,14 +578,14 @@ if ("ElasticNet" %in% names(res_bal$models) || "ElasticNet" %in% names(res_unbal
         object = res_bal$models[["ElasticNet"]],
         X = x_train,
         bg_X = x_train[bg_idx, , drop = FALSE],
-        pred_fun = function(m, d) predict(m, newdata = d, type = "prob")[, "TP"]
+        pred_fun = function(m, d) stats::predict(m, newdata = d, type = "prob")[, "TP"]
       )
     }, error = function(e) NULL)
     if (!is.null(shap_calc_bal)) {
       shap_obj_bal <- shapviz::shapviz(shap_calc_bal)
       saveRDS(shap_obj_bal, file = file.path(opt$out_models, "shap_values.rds"))
       saveRDS(shap_obj_bal, file = file.path(opt$out_models, "shap_values_balanced.rds"))
-      cat("   -> Artefacto SHAP (Balanceado) serializado exitosamente.\n")
+      cat("   -> Artefacto SHAP (Balanceado) serializado.\n")
     }
   }
 
@@ -549,32 +595,36 @@ if ("ElasticNet" %in% names(res_bal$models) || "ElasticNet" %in% names(res_unbal
         object = res_unbal$models[["ElasticNet"]],
         X = x_train,
         bg_X = x_train[bg_idx, , drop = FALSE],
-        pred_fun = function(m, d) predict(m, newdata = d, type = "prob")[, "TP"]
+        pred_fun = function(m, d) stats::predict(m, newdata = d, type = "prob")[, "TP"]
       )
     }, error = function(e) NULL)
     if (!is.null(shap_calc_unbal)) {
       shap_obj_unbal <- shapviz::shapviz(shap_calc_unbal)
       saveRDS(shap_obj_unbal, file = file.path(opt$out_models, "shap_values_unbalanced.rds"))
-      cat("   -> Artefacto SHAP (Desbalanceado) serializado exitosamente.\n")
+      cat("   -> Artefacto SHAP (Desbalanceado) serializado.\n")
     }
   }
 }
 
-# 7. Renderizado del Reporte HTML
-cat("[7/7] Renderizando reporte HTML interactivo con Quarto...\n")
+# 8. Compilación de reporte Quarto de solo lectura
+cat("[8/8] Compilando reporte HTML de entrenamiento con Quarto...\n")
 qmd_file <- file.path(project_root, "training_report.qmd")
 if (!opt$render_report) {
-  cat("   -> Renderizado omitido (--no_render_report).\n")
+  cat("   -> Compilación omitida (--no_render_report).\n")
 } else if (!file.exists(qmd_file)) {
-  cat(sprintf("   -> [AVISO] Renderizado omitido: no existe la plantilla %s\n", qmd_file))
+  cat(sprintf("   -> [AVISO] Compilación omitida: no existe la plantilla %s\n", qmd_file))
 } else if (!nzchar(Sys.which("quarto"))) {
-  cat("   -> [AVISO] Renderizado omitido: 'quarto' no esta instalado o no esta en el PATH.\n")
+  cat("   -> [AVISO] Compilación omitida: 'quarto' no está disponible en el PATH.\n")
 } else {
   out_html <- normalizePath(opt$report_file, mustWork = FALSE)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
   rendered_in_root <- file.path(dirname(qmd_file), basename(out_html))
 
-  src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE))) else ""
+  src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) {
+    sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE)))
+  } else {
+    ""
+  }
   cmd_quarto <- sprintf(
     "quarto render %s --output %s -P project_root:%s -P data_path:%s -P data_file:%s -P models_dir:%s%s",
     shQuote(qmd_file),
@@ -594,7 +644,7 @@ if (!opt$render_report) {
     }
     cat(sprintf("   -> [OK] Reporte HTML generado: %s\n", out_html))
   } else {
-    cat(sprintf("   -> [AVISO] Fallo el renderizado con Quarto (codigo de retorno: %d).\n", res_q))
+    cat(sprintf("   -> [AVISO] Falló el renderizado con Quarto (código de retorno: %d).\n", res_q))
   }
 }
 
@@ -602,12 +652,12 @@ elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
 cat("--------------------------------------------------------\n")
 options(width = 200)
-cat(sprintf(" BENCHMARK COMPARATIVO FINAL — BALANCEADO (%d MODELOS):\n", nrow(df_benchmark_bal)))
+cat(sprintf(" BENCHMARK COMPARATIVO FINAL - ESCENARIO BALANCEADO (%d METODOS):\n", nrow(df_benchmark_bal)))
 cat("--------------------------------------------------------\n")
 print(df_benchmark_bal %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)), digits = 3)
 cat("--------------------------------------------------------\n")
-cat(sprintf(" BENCHMARK COMPARATIVO FINAL — DESBALANCEADO (%d MODELOS):\n", nrow(df_benchmark_unbal)))
+cat(sprintf(" BENCHMARK COMPARATIVO FINAL - ESCENARIO DESBALANCEADO (%d METODOS):\n", nrow(df_benchmark_unbal)))
 cat("--------------------------------------------------------\n")
 print(df_benchmark_unbal %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)), digits = 3)
 cat("========================================================\n")
-cat(sprintf("[OK] Todos los modelos serializados en: %s (Tiempo total: %.2f s)\n", opt$out_models, elapsed_sec))
+cat(sprintf("[OK] Artefactos serializados en: %s (Tiempo total: %.2f s)\n", opt$out_models, elapsed_sec))

@@ -33,6 +33,7 @@ models/*.tsv
 models/**/*.tsv
 !data/**/.gitkeep
 !models/**/.gitkeep
+!data/reference/sources_citations.tsv
 
 # Excepciones para Minimal Working Example (archivos ligeros para testing)
 !data/test_data/*.tsv
@@ -78,3 +79,4 @@ archive/
 
 /.quarto/
 **/*.quarto_ipynb
+.github/
