@@ -5,6 +5,7 @@ Version: 1.1.0
 Authors@R: person(
     given = "Diego Andres",
     family = "Benitez Duarte",
+    email = "dabenitezd@unal.edu.co",
     role = c("aut", "cre"),
     comment = "Maestria en Bioinformatica, Universidad Nacional de Colombia"
   )

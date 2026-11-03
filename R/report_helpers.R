@@ -388,7 +388,7 @@ build_interactive_benchmark_plotly <- function(df_bench,
     plotly::layout(
       title = list(
         text = paste0(
-          "<b>Benchmark (", view_label, " — Ordenado por ROC-AUC) — ", context_title, "</b><br>",
+          "<b>Benchmark (", view_label, " - Ordenado por ROC-AUC): ", context_title, "</b><br>",
           "<sup>Seleccione métricas en el menú superior o active/desactive series desde la leyenda inferior</sup>"
         ),
         x = 0.5
@@ -583,7 +583,7 @@ render_single_model_diagnostics <- function(mod_name,
     fdr_txt <- if (is.na(row_m$FDR[1])) "NA" else sprintf("%.2f%%", row_m$FDR[1] * 100)
     prec_txt <- if (is.na(row_m$Precision[1])) "NA" else sprintf("%.2f%%", row_m$Precision[1] * 100)
     cat(sprintf(
-      "<div class='model-badge' style='background-color:%s;'>%s (%s) — F1: %.3f | ROC-AUC: %.3f | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %s | FDR: %s</div>\n\n",
+      "<div class='model-badge' style='background-color:%s;'>%s (%s): F1: %.3f | ROC-AUC: %.3f | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %s | FDR: %s</div>\n\n",
       pal$high, mod_name, scen_label,
       row_m$F1_Score[1], row_m$ROC_AUC[1],
       row_m$Exactitud_Balanceada[1] * 100,
@@ -662,11 +662,11 @@ render_single_model_extra <- function(mod_name, models_list, scen_label = "Escen
   if (mod_name == "Red_Neuronal_Bag" && !is.null(mod_obj$finalModel)) {
     n_nets <- if (!is.null(mod_obj$finalModel$model)) length(mod_obj$finalModel$model) else NA
     topo_str <- if (!is.null(mod_obj$finalModel$model[[1]]$n)) paste(mod_obj$finalModel$model[[1]]$n, collapse = " - ") else "4 - size - 1"
-    cat(sprintf("Parámetros de Red_Neuronal_Bag (avNNet — %s): sub-redes = %s | topología = %s | size = %s | decay = %.4g\n",
+    cat(sprintf("Parámetros de Red_Neuronal_Bag (avNNet - %s): sub-redes = %s | topología = %s | size = %s | decay = %.4g\n",
                 scen_label, as.character(n_nets), topo_str, as.character(mod_obj$bestTune$size), as.numeric(mod_obj$bestTune$decay)))
   } else if (mod_name == "Red_Neuronal" && !is.null(mod_obj$finalModel)) {
     topo_str <- if (!is.null(mod_obj$finalModel$n)) paste(mod_obj$finalModel$n, collapse = " - ") else "4 - size - 1"
-    cat(sprintf("Parámetros de Red_Neuronal (nnet — %s): topología = %s | size = %s | decay = %.4g\n",
+    cat(sprintf("Parámetros de Red_Neuronal (nnet - %s): topología = %s | size = %s | decay = %.4g\n",
                 scen_label, topo_str, as.character(mod_obj$bestTune$size), as.numeric(mod_obj$bestTune$decay)))
   } else if (inherits(mod_obj, "caretStack")) {
     cat(sprintf("\nResumen del Meta-Modelo GLM Stacking (%s):\n", scen_label))
@@ -731,8 +731,9 @@ build_all_model_tabs_markdown <- function(scenario = c("balanced", "unbalanced")
 #'
 #' @param shap_obj Objeto `shapviz` serializado.
 #' @param df_ml_report Data frame de entrenamiento con metadatos de locus y clase real.
+#' @param proj_root Directorio raíz del proyecto para localizar `assets/waterfall.js`.
 #' @export
-render_shap_waterfall_html <- function(shap_obj, df_ml_report) {
+render_shap_waterfall_html <- function(shap_obj, df_ml_report, proj_root = ".") {
   if (is.null(shap_obj) || is.null(df_ml_report)) {
     cat("> *No hay valores SHAP disponibles para construir el explorador individual.*\n")
     return(invisible(NULL))
@@ -773,6 +774,17 @@ render_shap_waterfall_html <- function(shap_obj, df_ml_report) {
   })
 
   wf_json <- jsonlite::toJSON(wf_records, auto_unbox = TRUE)
+  js_candidates <- c(
+    file.path(proj_root, "assets", "waterfall.js"),
+    file.path("assets", "waterfall.js")
+  )
+  js_file <- js_candidates[file.exists(js_candidates)][1]
+  js_body <- if (!is.na(js_file) && file.exists(js_file)) {
+    paste(readLines(js_file, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+  } else {
+    ""
+  }
+
   fence_open  <- paste0("\n", strrep("`", 3), "{=html}\n")
   fence_close <- paste0("\n", strrep("`", 3), "\n\n")
 
@@ -791,24 +803,8 @@ render_shap_waterfall_html <- function(shap_obj, df_ml_report) {
     '</div></div>',
     '<div id="wf-meta-info" class="wf-meta-card"></div>',
     '<div id="wf-plotly-container" style="width:100%; height:460px;"></div>',
-    '<script>(function(){',
-    'const wfData=', wf_json, ';',
-    'const filterSelect=document.getElementById("wf-class-filter"),rowSelect=document.getElementById("wf-row-select"),prevBtn=document.getElementById("wf-prev-btn"),nextBtn=document.getElementById("wf-next-btn"),metaDiv=document.getElementById("wf-meta-info");',
-    'function renderWaterfall(rowNum){const d=wfData.find(x=>x.row===rowNum)||wfData[0];if(!d)return;',
-    'const badgeCls=d.clase==="TP"?"badge-tp":"badge-fp";',
-    'metaDiv.innerHTML="<b>Fila #"+d.row+"</b> | Clase Real: <span class=\'"+badgeCls+"\'>"+d.clase+"</span> | <b>Locus:</b> <code>"+d.gene+"</code> | <b>Ortogrupo:</b> <code>"+d.og+"</code> | <b>ID:</b> <code>"+d.seq_id+"</code> | <b>E[f(X)]:</b> "+d.base.toFixed(3)+" &rarr; <b>P(TP):</b> <b>"+(d.fx*100).toFixed(2)+"%</b>";',
-    'const ord=d.shaps.map((v,i)=>({i:i,abs:Math.abs(v)})).sort((a,b)=>a.abs-b.abs).map(o=>o.i);',
-    'const yLabels=ord.map(i=>d.features[i]+" = "+d.values[i]),xVals=ord.map(i=>d.shaps[i]),txt=xVals.map(v=>(v>=0?"+":"")+v.toFixed(4));',
-    'if(window.Plotly){Plotly.react("wf-plotly-container",[{type:"waterfall",orientation:"h",y:yLabels,x:xVals,text:txt,textposition:"outside",connector:{line:{color:"#7f8c8d",width:1,dash:"dot"}},increasing:{marker:{color:"#27ae60"}},decreasing:{marker:{color:"#c0392b"}},base:d.base}],{title:{text:"<b>Descomposición Aditiva SHAP — "+d.seq_id+" ("+d.gene+")</b>",font:{size:14}},xaxis:{title:"Contribución sobre probabilidad P(TP)",range:[-0.1,1.1]},margin:{l:185,r:45,t:55,b:50}},{responsive:true});}}',
-    'function populateDropdown(fv){const cur=rowSelect.value;rowSelect.innerHTML="";const fil=wfData.filter(d=>fv==="ALL"||d.clase===fv);',
-    'fil.forEach(d=>{const o=document.createElement("option");o.value=d.row;o.textContent="Fila #"+d.row+" ["+d.clase+"] — "+d.gene+" | "+d.og+" ("+d.seq_id+") | P(TP)="+(d.fx*100).toFixed(1)+"%";rowSelect.appendChild(o);});',
-    'if(fil.some(d=>String(d.row)===String(cur))){rowSelect.value=cur;}else if(fil.length>0){rowSelect.value=fil[0].row;}renderWaterfall(parseInt(rowSelect.value,10));}',
-    'filterSelect.addEventListener("change",()=>populateDropdown(filterSelect.value));',
-    'rowSelect.addEventListener("change",()=>renderWaterfall(parseInt(rowSelect.value,10)));',
-    'prevBtn.addEventListener("click",()=>{if(rowSelect.selectedIndex>0){rowSelect.selectedIndex-=1;renderWaterfall(parseInt(rowSelect.value,10));}});',
-    'nextBtn.addEventListener("click",()=>{if(rowSelect.selectedIndex<rowSelect.options.length-1){rowSelect.selectedIndex+=1;renderWaterfall(parseInt(rowSelect.value,10));}});',
-    'setTimeout(()=>populateDropdown("ALL"),120);',
-    '})();</script>',
+    '<script>\nwindow.TARGETCNV_WF_DATA = ', wf_json, ';\n',
+    js_body, '\n</script>',
     fence_close
   ))
 }
@@ -846,7 +842,7 @@ render_species_cms_grid <- function(res_sp, mode = c("top6", "thesis9", "top3_f1
       dplyr::pull(Modelo)
     selected_mods <- intersect(ml_only, names(all_cms))
     n_cols <- 3
-    banner_txt <- sprintf("Top 3 Clasificadores Supervisados en %s (%s — Ordenados por F1-Score)", sp_name, sc_label)
+    banner_txt <- sprintf("Top 3 Clasificadores Supervisados en %s (%s - Ordenados por F1-Score)", sp_name, sc_label)
   }
 
   plot_list <- lapply(selected_mods, function(m_name) {
@@ -886,7 +882,7 @@ render_single_transfer_model <- function(res_sp, mod_name) {
     fdr_txt <- if (is.na(row_m$FDR[1])) "NA" else sprintf("%.2f%%", row_m$FDR[1] * 100)
     prec_txt <- if (is.na(row_m$Precision[1])) "NA" else sprintf("%.2f%%", row_m$Precision[1] * 100)
     cat(sprintf(
-      "<div class='model-badge' style='background-color:%s;'>%s en %s — F1: %.3f | ROC-AUC: %.3f | Exactitud: %.2f%% | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %s | FDR: %s</div>\n\n",
+      "<div class='model-badge' style='background-color:%s;'>%s en %s: F1: %.3f | ROC-AUC: %.3f | Exactitud: %.2f%% | Exactitud Bal.: %.2f%% | Sensibilidad: %.2f%% | Especificidad: %.2f%% | Precisión: %s | FDR: %s</div>\n\n",
       pal$high, mod_name, sp_name,
       row_m$F1_Score[1], row_m$ROC_AUC[1],
       row_m$Exactitud[1] * 100, row_m$Exactitud_Balanceada[1] * 100,

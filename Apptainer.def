@@ -10,9 +10,21 @@ From: ubuntu:24.04
     Quarto_Version 1.10.20
 
 %files
-    renv.lock /opt/targetcnv-ml/renv.lock
     DESCRIPTION /opt/targetcnv-ml/DESCRIPTION
+    NAMESPACE /opt/targetcnv-ml/NAMESPACE
+    renv.lock /opt/targetcnv-ml/renv.lock
     renv/settings.json /opt/targetcnv-ml/renv/settings.json
+    targetcnv.sh /opt/targetcnv-ml/targetcnv.sh
+    run_test_pipeline.sh /opt/targetcnv-ml/run_test_pipeline.sh
+    training_report.qmd /opt/targetcnv-ml/training_report.qmd
+    report_template.qmd /opt/targetcnv-ml/report_template.qmd
+    transferability_report.qmd /opt/targetcnv-ml/transferability_report.qmd
+    assets /opt/targetcnv-ml/assets
+    R /opt/targetcnv-ml/R
+    scripts /opt/targetcnv-ml/scripts
+    tests /opt/targetcnv-ml/tests
+    data/reference/sources_citations.tsv /opt/targetcnv-ml/data/reference/sources_citations.tsv
+    data/test_data /opt/targetcnv-ml/data/test_data
 
 %environment
     export LC_ALL=C.UTF-8
@@ -20,8 +32,9 @@ From: ubuntu:24.04
     export R_VERSION=4.6.2
     export BIOCONDUCTOR_VERSION=3.23
     export QUARTO_VERSION=1.10.20
-    export PATH="/opt/R/4.6.2/bin:/usr/local/bin:${PATH}"
+    export PATH="/opt/targetcnv-ml:/opt/R/4.6.2/bin:/usr/local/bin:${PATH}"
     export R_LIBS_USER="/opt/targetcnv-ml/library"
+    export RENV_PATHS_LIBRARY="/opt/targetcnv-ml/library"
     export RENV_CONFIG_AUTOLOADER_ENABLED=FALSE
 
 %post
@@ -88,9 +101,14 @@ From: ubuntu:24.04
         prompt = FALSE
       )
     '
+    chmod +x /opt/targetcnv-ml/targetcnv.sh /opt/targetcnv-ml/run_test_pipeline.sh /opt/targetcnv-ml/scripts/*.R
 
 %runscript
-    exec ./targetcnv.sh "$@"
+    if [ -x "./targetcnv.sh" ]; then
+        exec ./targetcnv.sh "$@"
+    else
+        exec /opt/targetcnv-ml/targetcnv.sh "$@"
+    fi
 
 %test
     R --version | grep -q "4.6.2"

@@ -11,7 +11,7 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
-# Ubicacion dinamica del proyecto y carga de modulos
+# Ubicación dinámica del proyecto y carga de módulos
 get_project_root <- function() {
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
@@ -26,13 +26,13 @@ get_project_root <- function() {
 project_root <- get_project_root()
 source(file.path(project_root, "R", "data_processing.R"))
 
-# Definicion de argumentos CLI con optparse
+# Definición de argumentos CLI con optparse
 option_list <- list(
   make_option(
     c("-g", "--gff_ref"),
     type = "character",
     default = NULL,
-    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio en escala cromosomica / modo overlap]",
+    help = "Ruta al archivo GFF/GFF3 del genoma de referencia [Obligatorio en escala cromosómica / modo overlap]",
     metavar = "FILE"
   ),
   make_option(
@@ -46,7 +46,7 @@ option_list <- list(
     c("-s", "--captus_stats"),
     type = "character",
     default = NULL,
-    help = "Ruta al archivo TSV de estadisticas de CAPTUS (captus-extract_stats.tsv) [Obligatorio]",
+    help = "Ruta al archivo TSV de estadísticas de CAPTUS (captus-extract_stats.tsv) [Obligatorio]",
     metavar = "FILE"
   ),
   make_option(
@@ -67,7 +67,7 @@ option_list <- list(
     c("--genome_scale"),
     type = "character",
     default = NULL,
-    help = "Escala estructural del genoma: 'chromosome' (escala cromosomica -> overlap con --gff_ref) o 'contig' (escala de contigs -> atributo Target + puente HOG<->OG) [Opcional]",
+    help = "Escala estructural del genoma: 'chromosome' (escala cromosómica -> overlap con --gff_ref) o 'contig' (escala de contigs -> atributo Target + puente HOG<->OG) [Opcional]",
     metavar = "STR"
   ),
   make_option(
@@ -81,7 +81,7 @@ option_list <- list(
     c("-o", "--out_dir"),
     type = "character",
     default = file.path(project_root, "data"),
-    help = "Directorio donde se guardaran los datos preparados [Por defecto: data/]",
+    help = "Directorio donde se guardarán los datos preparados [Por defecto: data/]",
     metavar = "DIR"
   ),
   make_option(
@@ -95,14 +95,14 @@ option_list <- list(
     c("--allow_multi_sample"),
     action = "store_true",
     default = FALSE,
-    help = "Permitir aplicar un mismo GFF sobre multiples muestras sin --sample (solo para datasets sinteticos MWE)"
+    help = "Permitir aplicar un mismo GFF sobre múltiples muestras sin --sample (solo para datasets sintéticos MWE)"
   )
 )
 
 opt_parser <- OptionParser(
   usage = "Uso: %prog [opciones]",
   option_list = option_list,
-  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales (escala cromosomica o escala de contigs), resuelve redundancias y genera dataset de entrenamiento/transferencia."
+  description = "Prepara datos de CAPTUS, ejecuta cruces espaciales (escala cromosómica o escala de contigs), resuelve redundancias y genera dataset de entrenamiento/transferencia."
 )
 
 opt <- parse_args(opt_parser)
@@ -110,7 +110,7 @@ opt <- parse_args(opt_parser)
 # Sincronizar --genome_scale y --target_mode
 if (!is.null(opt$genome_scale)) {
   gs_clean <- tolower(trimws(opt$genome_scale))
-  if (gs_clean %in% c("chromosome", "cromosomico", "cromosomica", "chr")) {
+  if (gs_clean %in% c("chromosome", "cromosomico", "cromosomica", "cromosómico", "cromosómica", "chr")) {
     opt$target_mode <- "overlap"
     opt$genome_scale <- "chromosome"
   } else if (gs_clean %in% c("contig", "contigs", "fragmented", "fragmentado")) {
@@ -123,7 +123,7 @@ if (!is.null(opt$genome_scale)) {
   opt$genome_scale <- if (opt$target_mode == "target_attr") "contig" else "chromosome"
 }
 
-# Validacion de argumentos requeridos
+# Validación de argumentos requeridos
 if (is.null(opt$captus_gff) || is.null(opt$captus_stats)) {
   print_help(opt_parser)
   stop("[ERROR] Debe especificar --captus_gff y --captus_stats.", call. = FALSE)
@@ -133,19 +133,19 @@ if (!opt$target_mode %in% c("overlap", "target_attr")) {
 }
 if (opt$target_mode == "overlap" && is.null(opt$gff_ref)) {
   print_help(opt_parser)
-  stop("[ERROR] En escala cromosomica (modo 'overlap') debe especificar --gff_ref (o usar --genome_scale contig / --target_mode target_attr).", call. = FALSE)
+  stop("[ERROR] En escala cromosómica (modo 'overlap') debe especificar --gff_ref (o usar --genome_scale contig / --target_mode target_attr).", call. = FALSE)
 }
 if (!is.null(opt$gff_ref) && !file.exists(opt$gff_ref)) {
-  stop(sprintf("[ERROR] No se encontro el archivo GFF de referencia: %s", opt$gff_ref), call. = FALSE)
+  stop(sprintf("[ERROR] No se encontró el archivo GFF de referencia: %s", opt$gff_ref), call. = FALSE)
 }
 if (!file.exists(opt$captus_gff)) {
-  stop(sprintf("[ERROR] No se encontro el archivo GFF de CAPTUS: %s", opt$captus_gff), call. = FALSE)
+  stop(sprintf("[ERROR] No se encontró el archivo GFF de CAPTUS: %s", opt$captus_gff), call. = FALSE)
 }
 if (!file.exists(opt$captus_stats)) {
-  stop(sprintf("[ERROR] No se encontro el archivo de estadisticas: %s", opt$captus_stats), call. = FALSE)
+  stop(sprintf("[ERROR] No se encontró el archivo de estadísticas: %s", opt$captus_stats), call. = FALSE)
 }
 if (!is.null(opt$dict_ref) && !file.exists(opt$dict_ref)) {
-  stop(sprintf("[ERROR] No se encontro el diccionario de referencia (--dict_ref): %s", opt$dict_ref), call. = FALSE)
+  stop(sprintf("[ERROR] No se encontró el diccionario de referencia (--dict_ref): %s", opt$dict_ref), call. = FALSE)
 }
 
 if (!dir.exists(opt$out_dir)) {
@@ -153,15 +153,15 @@ if (!dir.exists(opt$out_dir)) {
 }
 
 cat("========================================================\n")
-cat(" TargetCNV-ML: Modulo 01 - Preparacion de Datos y Cruce Espacial \n")
+cat(" TargetCNV-ML: Módulo 01 - Preparación de Datos y Cruce Espacial \n")
 cat("========================================================\n")
 cat(sprintf("Escala del Genoma        : %s (%s)\n",
-            if (opt$genome_scale == "chromosome") "Cromosomica" else "Contigs (Fragmentado)",
+            if (opt$genome_scale == "chromosome") "Cromosómica" else "Contigs (Fragmentado)",
             opt$target_mode))
 if (!is.null(opt$gff_ref)) cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
 cat(sprintf("CAPTUS Contigs GFF       : %s\n", opt$captus_gff))
-cat(sprintf("Estadisticas CAPTUS      : %s\n", opt$captus_stats))
-if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homologia : %s\n", opt$dict_ref))
+cat(sprintf("Estadísticas CAPTUS      : %s\n", opt$captus_stats))
+if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homología : %s\n", opt$dict_ref))
 if (!is.null(opt$sample))   cat(sprintf("Filtro de Muestra        : %s\n", opt$sample))
 cat(sprintf("Directorio de Salida     : %s\n", opt$out_dir))
 cat("--------------------------------------------------------\n")
@@ -174,7 +174,7 @@ gff_captus_raw <- rtracklayer::import(opt$captus_gff)
 gff_captus <- filter_gff_features(gff_captus_raw, feature_type = "protein_match:NUC")
 cat(sprintf("   -> Marcadores funcionales (NUC) CAPTUS: %d\n", length(gff_captus)))
 
-# 2. Interseccion espacial o extraccion desde atributo Target
+# 2. Intersección espacial o extracción desde atributo Target
 n_genes_ref <- NA_integer_
 if (opt$target_mode == "overlap") {
   gff_ref_raw <- rtracklayer::import(opt$gff_ref)
@@ -182,16 +182,16 @@ if (opt$target_mode == "overlap") {
   n_genes_ref <- length(genes_ref)
   cat(sprintf("   -> Genes de referencia cargados: %d\n", n_genes_ref))
 
-  cat("[2/6] Ejecutando interseccion espacial estricta (GenomicRanges)...\n")
+  cat("[2/6] Ejecutando intersección espacial estricta (GenomicRanges)...\n")
   df_cruces <- find_spatial_overlaps(query_gff = gff_captus, subject_gff = genes_ref, ignore_strand = FALSE)
   cat(sprintf("   -> Hits espaciales encontrados: %d\n", nrow(df_cruces)))
 } else {
   cat("[2/6] Extrayendo loci de referencia desde el atributo Target del GFF de CAPTUS (Escala de Contigs)...\n")
   df_cruces <- extract_target_loci_from_gff(gff_captus)
-  cat(sprintf("   -> Hits unicos extraidos desde Target tras colapsar exones: %d\n", nrow(df_cruces)))
+  cat(sprintf("   -> Hits únicos extraídos desde Target tras colapsar exones: %d\n", nrow(df_cruces)))
 }
 
-# 3. Clasificacion con diccionario de referencia (si esta disponible)
+# 3. Clasificación con diccionario de referencia (si está disponible)
 cat("[3/6] Evaluando correspondencia con diccionario de referencia...\n")
 db_sheets <- NULL
 n_ogs_captus <- length(unique(df_cruces$OG_Captus))
@@ -225,7 +225,7 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
     dict_og_col = col_og
   )
 } else {
-  cat("  [AVISO] No se proporciono diccionario (--dict_ref): todos los hits con solape espacial se marcaran\n")
+  cat("  [AVISO] No se proporcionó diccionario (--dict_ref): todos los hits con solape espacial se marcarán\n")
   cat("          como TRUE_POSITIVE. Con esta salida NO es posible entrenar (02_train_models.R requiere TP y FP).\n")
   df_clasificacion <- df_cruces %>%
     dplyr::mutate(
@@ -240,8 +240,8 @@ if (!is.null(opt$dict_ref) && file.exists(opt$dict_ref)) {
     dplyr::distinct(ID_Captus, .keep_all = TRUE)
 }
 
-# 4. Integracion con estadisticas de CAPTUS
-cat("[4/6] Integrando metricas continuas de alineamiento CAPTUS...\n")
+# 4. Integración con estadísticas de CAPTUS
+cat("[4/6] Integrando métricas continuas de alineamiento CAPTUS...\n")
 stats_crudo <- utils::read.delim(opt$captus_stats, header = TRUE, stringsAsFactors = FALSE)
 
 muestras_disponibles <- unique(stats_crudo$sample_name)
@@ -259,9 +259,9 @@ if (!is.null(opt$sample)) {
 } else if (length(muestras_disponibles) > 1 && !isTRUE(opt$allow_multi_sample)) {
   stop(sprintf(
     paste0(
-      "[ERROR] El archivo %s contiene %d muestras (%s%s), pero no se especifico --sample.\n",
-      "        Como el GFF corresponde a un ensamblaje especifico, indique --sample <Muestra> para evitar\n",
-      "        propagar las etiquetas espaciales de una muestra a las demas."
+      "[ERROR] El archivo %s contiene %d muestras (%s%s), pero no se especificó --sample.\n",
+      "        Como el GFF corresponde a un ensamblaje específico, indique --sample <Muestra> para evitar\n",
+      "        propagar las etiquetas espaciales de una muestra a las demás."
     ),
     opt$captus_stats, length(muestras_disponibles),
     paste(utils::head(muestras_disponibles, 10), collapse = ", "),
@@ -300,7 +300,7 @@ attr(stats_preparado, "n_ogs_bridge") <- n_ogs_bridge
 attr(stats_preparado, "n_genes_ref")  <- n_genes_ref
 attr(stats_preparado, "n_hits_gff")   <- nrow(df_cruces)
 
-# 6. Exportacion de artefactos
+# 6. Exportación de artefactos
 cat("[6/6] Guardando datos preparados...\n")
 out_tsv <- file.path(opt$out_dir, paste0(opt$out_prefix, ".tsv"))
 out_rds <- file.path(opt$out_dir, paste0(opt$out_prefix, ".rds"))
@@ -311,16 +311,16 @@ saveRDS(stats_preparado, file = out_rds)
 elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
 cat("--------------------------------------------------------\n")
-cat(" RESUMEN FINAL DE PREPARACION\n")
+cat(" RESUMEN FINAL DE PREPARACIÓN\n")
 cat("--------------------------------------------------------\n")
 cat(sprintf("Total secuencias analizadas (NUC) : %d\n", nrow(stats_preparado)))
 cat(sprintf("Verdaderos Positivos (TP)         : %d\n", sum(stats_preparado$Validacion_Espacial == "TRUE_POSITIVE")))
 cat(sprintf("Falsos Positivos & Redundantes    : %d\n", sum(stats_preparado$Validacion_Espacial == "FALSE_POSITIVE")))
-cat("\nDesglose de Origen Biologico (Doble Control):\n")
+cat("\nDesglose de Origen Biológico (Doble Control):\n")
 print(table(stats_preparado$Doble_Control_Biologico))
 cat("--------------------------------------------------------\n")
 cat(sprintf("Archivo TSV generado              : %s\n", out_tsv))
 cat(sprintf("Archivo RDS generado              : %s\n", out_rds))
-cat(sprintf("Tiempo de ejecucion               : %.2f s\n", elapsed_sec))
+cat(sprintf("Tiempo de ejecución               : %.2f s\n", elapsed_sec))
 cat("========================================================\n")
-cat("[OK] Proceso completado con exito.\n")
+cat("[OK] Proceso completado con éxito.\n")

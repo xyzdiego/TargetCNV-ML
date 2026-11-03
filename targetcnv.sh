@@ -380,6 +380,7 @@ cmd_run_all() {
   local cov_threshold="50.0"
   local top_loci=30
   local report_file="reports/reporte_entrenamiento.html"
+  local infer_report_file=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -404,6 +405,7 @@ cmd_run_all() {
       --cov_threshold) cov_threshold="$2"; shift 2 ;;
       -t|--top_loci) top_loci="$2"; shift 2 ;;
       -r|--report_file) report_file="$2"; shift 2 ;;
+      --infer_report_file) infer_report_file="$2"; shift 2 ;;
       -h|--help)
         echo "Uso: ./targetcnv.sh run-all -g <ref.gff3> -c <captus.gff> -s <stats.tsv> -d <dict> [-p <sample>] [-i <infer.tsv>]"
         exit 0 ;;
@@ -418,6 +420,23 @@ cmd_run_all() {
   fi
   if [ -z "$infer_input" ]; then
     infer_input="$captus_stats"
+  fi
+  if [ -z "$infer_report_file" ]; then
+    if [[ "$report_file" != "reports/reporte_entrenamiento.html" ]]; then
+      if [[ "$report_file" == *entrenamiento* ]]; then
+        infer_report_file="${report_file/entrenamiento/inferencia}"
+      elif [[ "$report_file" == *training* ]]; then
+        infer_report_file="${report_file/training/inference}"
+      else
+        infer_report_file="${report_file%.html}_inferencia.html"
+      fi
+    elif [ -n "$sample_name" ]; then
+      infer_report_file="reports/reporte_inferencia_${sample_name}.html"
+    elif [[ "$out_results" != "results" ]]; then
+      infer_report_file="reports/reporte_inferencia_$(basename "$out_results").html"
+    else
+      infer_report_file="reports/reporte_inferencia.html"
+    fi
   fi
 
   print_banner
@@ -446,13 +465,15 @@ cmd_run_all() {
     --out_dir "$out_results" \
     --cov_threshold "$cov_threshold" \
     --min_votes "$min_votes" \
-    --top_loci "$top_loci"
+    --top_loci "$top_loci" \
+    --report_file "$infer_report_file"
 
   echo -e "\n${BOLD}${GREEN}[OK] Flujo completo finalizado.${NC}"
-  echo -e "  - Datos preparados : ${CYAN}${out_data}/data_prepared.rds${NC}"
-  echo -e "  - Modelos          : ${CYAN}${out_models}/${NC}"
-  echo -e "  - Matriz CNV       : ${CYAN}${out_results}/cnv_matrix.tsv${NC}"
-  echo -e "  - Reporte HTML     : ${CYAN}${report_file}${NC}\n"
+  echo -e "  - Datos preparados      : ${CYAN}${out_data}/data_prepared.rds${NC}"
+  echo -e "  - Modelos               : ${CYAN}${out_models}/${NC}"
+  echo -e "  - Matriz CNV            : ${CYAN}${out_results}/cnv_matrix.tsv${NC}"
+  echo -e "  - Reporte Entrenamiento : ${CYAN}${report_file}${NC}"
+  echo -e "  - Reporte Inferencia    : ${CYAN}${infer_report_file}${NC}\n"
 }
 
 cmd_report() {

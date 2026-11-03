@@ -8,115 +8,119 @@
 [![Estado del Pipeline](https://img.shields.io/badge/Pipeline-Validado-brightgreen.svg)](#inicio-rápido-batería-de-pruebas)
 [![Entorno: renv](https://img.shields.io/badge/Entorno-renv%20%7C%20Pixi%20%7C%20Apptainer-purple.svg)](https://rstudio.github.io/renv/)
 
-Paquete bioinformático en R con interfaz de línea de comandos para estimar **variaciones en el número de copias (CNV)** y distinguir **homólogos funcionales** frente a artefactos técnicos en ensamblajes de secuenciación por captura de genes (*Target Capture*).
+**TargetCNV-ML** es una herramienta bioinformática desarrollada en R y ejecutable desde la línea de comandos para estimar **variaciones en el número de copias génicas (CNV)** a partir de ensamblajes obtenidos por captura dirigida de genes (*Target Capture* / *Hyb-Seq*). Su propósito principal es discriminar entre **homólogos funcionales** (ortólogos principales y parálogos reales) y artefactos técnicos del ensamblaje *de novo*.
 
-> [!IMPORTANT]
-> **Idioma del flujo interno:** Los mensajes de consola, los nombres de columnas en las tablas de salida y los reportes HTML generados con Quarto dentro de `reports/` (`reporte_entrenamiento.html`, `reporte_inferencia.html` y `reporte_transferencia.html`) están redactados en **español**.
-
----
-
-## Visión General
-
-La captura dirigida de genes (*Target Capture*) permite recuperar cientos de loci nucleares a bajo costo en estudios filogenómicos y de genética evolutiva. Sin embargo, cuantificar el número de copias génicas a partir de contigs ensamblados *de novo* presenta dos dificultades recurrentes:
-
-1. **Hibridación cruzada y asimetría entre parálogos:** Las sondas suelen capturar simultáneamente ortólogos principales, parálogos divergentes y fragmentos fuera de objetivo en regiones intrónicas o intergénicas, elevando la tasa de falsos descubrimientos (FDR).
-2. **Fragmentación técnica del ensamblaje:** Un único gen puede ensamblarse en dos o más contigs parciales. Contar todos los contigs recuperados como copias independientes sobreestima artificialmente el número de copias.
-
-**TargetCNV-ML** aborda ambos problemas en cuatro etapas acopladas:
-- **Etiquetado espacial de referencia (`01_prepare_data.R`):** Intersección estricta por cromosoma y hebra (`GenomicRanges`) frente a la anotación GFF3 de referencia (o reconciliación de identificadores `Target` mediante tabla puente `HOG_ID` / `OG_ID` en ensamblajes a escala de contigs), seguida de deduplicación intra-locus para retener un único verdadero positivo por gen anotado.
-- **Diagnóstico de colinealidad y entrenamiento supervisado (`02_train_models.R`):** Prueba de correlación por rangos de Spearman ($\rho$) entre las cuatro métricas continuas de CAPTUS (`pct_recovered`, `pct_identity`, `score`, `wscore`), optimización de 4 puntos de corte univariados de Youden, ajuste de 1 ensamble heurístico ponderado (`Weighted_Heuristic`), validación cruzada estratificada determinista sobre **18 algoritmos supervisados** (`RandomForest`, `GBM`, `XGBoost`, `SVM_Radial`, `SVM_Lineal`, `SVM_Polinomial`, `Red_Neuronal`, `Red_Neuronal_Bag`, `ElasticNet`, `KNN`, `CART`, `NaiveBayes`, `LDA`, `MLP`, `MLP_Regularizado`, `QDA`, `Bagging_Arboles`, `Stacked Autoencoder - DNN`) y ajuste del meta-modelo `Ensamble_Stacking` (24 métodos en total), en regímenes balanceado y desbalanceado, junto con explicabilidad KernelSHAP.
-- **Consenso multimodelo y calibración de cobertura (`03_cnv_inference.R`):** Votación por mayoría ($\ge 4/7$ votos) integrando 4 clasificadores supervisados (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), 2 umbrales de Youden (`pct_recovered`, `pct_identity`) y el modelo heurístico ponderado. Dentro de cada muestra y ortogrupo, la secuencia aceptada de mayor cobertura se asigna como `Copia_Principal`, los hits adicionales con `pct_recovered >= --cov_threshold` (por defecto `50.0%`) se contabilizan como `Homologo_Confirmado` y los fragmentos menores quedan como `No_Contado`, generando además una curva empírica de sensibilidad entre `30%` y `80%`.
-- **Transferencia filogenética y concordancia de copias por ortogrupo (`04_evaluate_transferability.R`):** Evaluación sin reentrenamiento sobre especies receptoras a escala cromosómica y de contigs, cuantificando tanto las métricas binarias de clasificación como la concordancia del número de copias por ortogrupo ($\widehat{\text{CNV}}_{\text{OG}}$ vs. $\text{CNV}^{\text{real}}_{\text{OG}}$) mediante $\rho$ de Spearman, Kappa cuadrático ponderado ($\kappa_w$), RMSE y tasa de concordancia exacta.
+*Nota sobre el idioma del flujo interno:* Los mensajes de registro en consola, los nombres de las columnas en las tablas exportadas y los tres reportes HTML compilados con Quarto dentro de `reports/` (`reporte_entrenamiento.html`, `reporte_inferencia.html` y `reporte_transferencia.html`) se generan en español.
 
 ---
 
-## Estructura del Repositorio
+## Contexto Biológico y Enfoque Metodológico
+
+En estudios filogenómicos y de evolución del metabolismo especializado en plantas, la captura de genes mediante sondas de hibridación permite recuperar cientos de loci nucleares a bajo costo. No obstante, cuando se intenta estimar el número de copias de cada familia génica directamente a partir de los contigs ensamblados por herramientas como CAPTUS y MEGAHIT, aparecen dos fuentes sistemáticas de error:
+
+1. **Hibridación cruzada y captura fuera de objetivo:** Las sondas diseñadas sobre exones conservados suelen hibridar simultáneamente con el ortólogo principal, con parálogos divergentes y con fragmentos intrónicos o intergénicos no codificantes. Si estos últimos no se filtran, incrementan sustancialmente la tasa de falsos descubrimientos (FDR).
+2. **Fragmentación técnica del ensamblaje:** Un mismo locus génico puede quedar dividido en dos o más contigs parciales durante el ensamblaje de lecturas cortas. Contabilizar cada contig recuperado como una copia independiente confunde fragmentación técnica con duplicación génica real.
+
+Para resolver ambos problemas, el flujo de trabajo de **TargetCNV-ML** se divide en cuatro módulos secuenciales:
+
+### 1. Etiquetado espacial de referencia (`01_prepare_data.R`)
+Cruza por cromosoma y hebra (`GenomicRanges`) los contigs nucleares ensamblados por CAPTUS (`protein_match:NUC`) frente a la anotación GFF3 del genoma de referencia. En especies cuyo ensamblaje de referencia se encuentra fragmentado a nivel de contigs, extrae el locus desde el atributo `Target` y reconcilia los grupos jerárquicos `HOG_ID` con los ortogrupos pangenómicos `OG_ID` empleando la tabla de diseño de sondas. Posteriormente aplica deduplicación intra-locus para conservar como verdadero positivo (`TRUE_POSITIVE`) únicamente el contig principal de cada gen anotado.
+
+### 2. Colinealidad y entrenamiento supervisado determinista (`02_train_models.R`)
+Evalúa la correlación por rangos de Spearman ($\rho$) entre las cuatro métricas continuas de alineamiento de CAPTUS (`pct_recovered`, `pct_identity`, `score` y `wscore`), calcula 4 umbrales univariados óptimos según el índice $J$ de Youden y calibra un ensamble heurístico ponderado (`Weighted_Heuristic`). Sobre la misma partición entrena **18 clasificadores supervisados** (`RandomForest`, `GBM`, `XGBoost`, `SVM_Radial`, `SVM_Lineal`, `SVM_Polinomial`, `Red_Neuronal`, `Red_Neuronal_Bag`, `ElasticNet`, `KNN`, `CART`, `NaiveBayes`, `LDA`, `MLP`, `MLP_Regularizado`, `QDA`, `Bagging_Arboles` y `Stacked Autoencoder - DNN`) junto con un meta-modelo GLM de apilamiento (`Ensamble_Stacking`, completando 24 métodos en total) bajo esquemas balanceado y desbalanceado, acompañados de análisis de explicabilidad aditiva con KernelSHAP.
+
+### 3. Consenso de 7 modelos e inferencia de copias (`03_cnv_inference.R`)
+Clasifica nuevas muestras mediante votación por mayoría ($\ge 4/7$ votos) combinando 4 modelos supervisados (`ElasticNet`, `NaiveBayes`, `SVM_Polinomial`, `Red_Neuronal`), 2 puntos de corte de Youden (`pct_recovered`, `pct_identity`) y el modelo `Weighted_Heuristic`. Dentro de cada muestra y ortogrupo, la secuencia válida de mayor cobertura se registra como `Copia_Principal`, los hits secundarios con `pct_recovered >= --cov_threshold` (por defecto `50.0%`) se suman como `Homologo_Confirmado` y los fragmentos más cortos se marcan como `No_Contado`. Además, el módulo genera una curva empírica de sensibilidad barriendo el umbral de cobertura entre `30%` y `80%`.
+
+### 4. Transferibilidad inter-especie y concordancia por ortogrupo (`04_evaluate_transferability.R`)
+Aplica sin reentrenamiento los modelos calibrados en la especie donante (*Solanum torvum*) sobre especies receptoras con genoma a escala cromosómica (*S. citrullifolium*) o a escala de contigs (*S. stellatiglandulosum*). Evalúa tanto el desempeño de clasificación binaria como la concordancia del número de copias por ortogrupo ($\widehat{\text{CNV}}_{\text{OG}}$ frente a $\text{CNV}^{\text{real}}_{\text{OG}}$) mediante correlación de Spearman ($\rho$), coeficiente Kappa cuadrático ponderado ($\kappa_w$), RMSE y porcentaje de concordancia exacta.
+
+---
+
+## Organización del Repositorio
 
 ```text
 TargetCNV-ML/
-├── DESCRIPTION                  # Metadatos formales y dependencias del paquete R TargetCNVML
-├── NAMESPACE                    # Funciones exportadas del paquete TargetCNVML
-├── .Rprofile                    # Activación automática del entorno aislado renv
-├── .gitignore                   # Reglas de exclusión de binarios pesados y artefactos locales
-├── renv.lock                    # Versiones exactas fijadas sobre R 4.6.2 y Bioconductor 3.23
-├── pixi.toml                    # Entorno reproducible conda-forge/bioconda (R 4.6 + Quarto 1.10.20)
+├── DESCRIPTION                  # Metadatos y dependencias del paquete R TargetCNVML
+├── NAMESPACE                    # Funciones exportadas del paquete
+├── .Rprofile                    # Activación automática de la librería aislada renv
+├── .gitignore                   # Reglas de exclusión para binarios pesados y salidas locales
+├── renv.lock                    # Versiones exactas de paquetes fijadas en R 4.6.2 / Bioconductor 3.23
+├── pixi.toml                    # Definición de entorno reproducible con Pixi (R 4.6 + Quarto 1.10.20)
 ├── Apptainer.def                # Receta de contenedor Apptainer/Singularity (R 4.6.2 + Quarto 1.10.20)
-├── targetcnv.sh                 # Script auxiliar en Bash para ejecutar los módulos desde terminal
+├── targetcnv.sh                 # Script envoltorio en Bash para ejecutar el flujo desde terminal
 ├── run_test_pipeline.sh         # Ejecución automatizada del Ejemplo Mínimo Funcional (MWE)
 ├── assets/
-│   └── report.css               # Hoja de estilos compartida por los reportes HTML de Quarto
-├── training_report.qmd          # Plantilla Quarto (solo lectura) para el reporte de entrenamiento
-├── report_template.qmd          # Plantilla Quarto (solo lectura) para el reporte de inferencia CNV
-├── transferability_report.qmd   # Plantilla Quarto (solo lectura) para el reporte de transferencia
-├── GUIA_EJECUCION.md            # Guía detallada de uso y referencia de comandos en español
-├── EXECUTION_GUIDE.md           # Guía detallada de uso y referencia de comandos en inglés
+│   ├── report.css               # Hoja de estilos CSS para los reportes HTML
+│   └── waterfall.js             # Lógica JavaScript del explorador interactivo SHAP Waterfall
+├── training_report.qmd          # Plantilla Quarto (solo lectura) del reporte de entrenamiento
+├── report_template.qmd          # Plantilla Quarto (solo lectura) del reporte de inferencia CNV
+├── transferability_report.qmd   # Plantilla Quarto (solo lectura) del reporte de transferencia
+├── GUIA_EJECUCION.md            # Manual detallado de ejecución y parámetros en español
+├── EXECUTION_GUIDE.md           # Manual de ejecución en inglés
 │
-├── R/                           # Funciones modulares del paquete documentadas con roxygen2
-│   ├── model_specs.R            # Especificación de 18 modelos ML, adaptador XGBoost y semillas CV
+├── R/                           # Funciones modulares documentadas con roxygen2
+│   ├── model_specs.R            # Especificación de los 18 clasificadores, XGBoost y semillas CV
 │   ├── data_processing.R        # Cruce espacial GFF, puente OG/HOG, deduplicación y matriz CNV
-│   ├── model_evaluation.R       # Youden, Spearman, consenso de 7 modelos, concordancia CNV y transferencia
-│   ├── plotting.R               # Gráficos ggplot2 de densidades, Spearman, sensibilidad y heatmaps
-│   └── report_helpers.R         # Cargadores de solo lectura, tablas DT, gráficos Plotly y SHAP
+│   ├── model_evaluation.R       # Cortes de Youden, Spearman, consenso, concordancia CNV y transferencia
+│   ├── plotting.R               # Funciones gráficas en ggplot2 y cowplot
+│   └── report_helpers.R         # Lectura de artefactos, tablas DT y visualizaciones Plotly/SHAP
 │
-├── scripts/                     # Scripts de interfaz de línea de comandos (optparse)
-│   ├── 01_prepare_data.R        # Módulo 01: Etiquetado espacial GFF y preparación de datos
+├── scripts/                     # Scripts CLI basados en optparse
+│   ├── 01_prepare_data.R        # Módulo 01: Cruce espacial GFF y preparación del conjunto de datos
 │   ├── 02_train_models.R        # Módulo 02: Colinealidad, validación cruzada de 24 métodos y SHAP
-│   ├── 03_cnv_inference.R       # Módulo 03: Inferencia de CNV, consenso 7 modelos y sensibilidad 30-80%
-│   └── 04_evaluate_transferability.R # Módulo 04: Evaluación de transferencia inter-especie y concordancia CNV
+│   ├── 03_cnv_inference.R       # Módulo 03: Inferencia de CNV, consenso y curva de cobertura 30-80%
+│   └── 04_evaluate_transferability.R # Módulo 04: Transferencia filogenética y concordancia por ortogrupo
 │
-├── tests/                       # Suite de pruebas unitarias e integración (testthat)
+├── tests/                       # Pruebas unitarias e integrales con testthat
 │   ├── testthat.R
 │   └── testthat/
 │       ├── test-models-and-seeds.R
 │       ├── test-spatial-and-cnv.R
 │       └── test-mwe-pipeline.R
 │
-├── .github/workflows/ci.yml     # Integración continua en GitHub Actions
+├── .github/workflows/ci.yml     # Flujo de integración continua para GitHub Actions
 ├── data/
 │   ├── reference/               # GFF3 de referencia, diccionario de sondas y sources_citations.tsv
-│   ├── CAPTUS_Muestras/         # Estadísticas de extracción CAPTUS multimuestra
-│   └── test_data/               # Conjunto sintético liviano para el MWE y pruebas automatizadas
+│   ├── CAPTUS_Muestras/         # Tablas de extracción de CAPTUS para muestras poblacionales
+│   └── test_data/               # Datos sintéticos livianos para el MWE y las pruebas unitarias
 │
-├── models/                      # Modelos serializados (.rds), benchmarks (.tsv), Spearman y SHAP
-├── results/                     # Matrices CNV, tablas de sensibilidad, concordancia y transferencia
-└── reports/                     # Directorio unificado de reportes HTML compilados con Quarto
+├── models/                      # Modelos serializados (.rds), tablas benchmark (.tsv), Spearman y SHAP
+├── results/                     # Matrices CNV, curvas de sensibilidad y resultados de transferencia
+└── reports/                     # Carpeta donde se agrupan todos los reportes HTML compilados
 ```
 
 ---
 
-## Requisitos e Instalación Reproducible
+## Instalación y Configuración del Entorno
 
-### Requisitos del Sistema
-- **Sistema operativo:** Linux (probado en Ubuntu 22.04/24.04, Debian y Arch/CachyOS), macOS o Windows vía WSL2.
-- **R:** versión `4.6.2` recomendada para coincidencia exacta con `renv.lock` y Bioconductor `3.23` (compatible con R $\ge 4.3$).
-- **Quarto CLI:** versión `1.10.20` (compatible con Quarto $\ge 1.4$) para renderizar las plantillas `.qmd`.
-- **Herramientas del sistema:** `bash`, `curl` o `wget`, `unzip`, `md5sum`, `gcc`, `g++`, `gfortran`, `make`.
+### Requisitos de software
+El flujo está diseñado para ejecutarse en sistemas Linux (probado en Ubuntu 22.04/24.04, Debian y Arch/CachyOS), macOS o Windows mediante WSL2. Se recomienda contar con **R 4.6.2** y **Bioconductor 3.23** para coincidencia directa con `renv.lock` (aunque el código es compatible con R $\ge 4.3$), **Quarto CLI 1.10.20** (o $\ge 1.4$) para renderizar las plantillas `.qmd`, y las herramientas estándar de compilación y descarga (`bash`, `curl` o `wget`, `unzip`, `md5sum`, `gcc`, `g++`, `gfortran`, `cmake` y `make`).
 
-### Opción A: Restauración estricta con `renv` (recomendada)
+### Restauración de paquetes con `renv` (opción recomendada)
 
 ```bash
 git clone https://github.com/xyzdiego/TargetCNV-ML.git
 cd TargetCNV-ML
 chmod +x targetcnv.sh run_test_pipeline.sh scripts/*.R
 
-# Restaura exactamente las versiones declaradas en renv.lock (sin alterar el lockfile)
+# Instala exactamente las versiones registradas en renv.lock sin alterar el lockfile
 ./targetcnv.sh restore
 ./targetcnv.sh doctor
 ```
 
 > [!CAUTION]
-> **Separación entre `restore` e hidratación de desarrollo:** Para instalar el entorno nunca utilice `renv::hydrate()` ni `renv::snapshot()`, ya que vinculan paquetes no fijados del sistema anfitrión y sobrescriben `renv.lock`. Utilice siempre `./targetcnv.sh restore` (o su alias `./targetcnv.sh setup`), que ejecuta `renv::restore(prompt = FALSE)` respetando estrictamente `renv.lock`.
+> **Evite usar `renv::hydrate()` o `renv::snapshot()` durante la instalación:** La hidratación vincula paquetes instalados globalmente en el sistema anfitrión sin respetar las versiones congeladas y un `snapshot` posterior sobrescribiría `renv.lock`. Utilice siempre `./targetcnv.sh restore` (o `./targetcnv.sh setup`), que invoca `renv::restore(prompt = FALSE)` de forma segura.
 
-### Opción B: Entorno congelado con Pixi o Apptainer
-
-Si desea fijar simultáneamente R, las bibliotecas compiladas del sistema y Quarto CLI:
+### Uso mediante Pixi o contenedor Apptainer
+Si prefiere congelar tanto la versión de R como las librerías de sistema y Quarto CLI en un entorno aislado:
 
 ```bash
-# Mediante Pixi (pixi.toml)
+# Con Pixi (lee pixi.toml)
 pixi install
 pixi run doctor
 
-# Mediante contenedor Apptainer / Singularity (Apptainer.def)
+# Con Apptainer / Singularity (construye la imagen a partir de Apptainer.def)
 apptainer build targetcnv-ml.sif Apptainer.def
 apptainer exec targetcnv-ml.sif ./targetcnv.sh doctor
 ```
@@ -125,60 +129,53 @@ apptainer exec targetcnv-ml.sif ./targetcnv.sh doctor
 
 ## Inicio Rápido (Batería de Pruebas)
 
-El repositorio incluye un **Ejemplo Mínimo Funcional (MWE)** en `data/test_data/` y una suite formal `testthat` en `tests/testthat/`.
+Antes de trabajar con datos genómicos propios, puede comprobar el funcionamiento del código mediante la suite de pruebas `testthat` y el **Ejemplo Mínimo Funcional (MWE)** incluido en `data/test_data/`:
 
 ```bash
-# 1. Ejecutar la suite de pruebas unitarias e integración (cruce GFF, semillas, XGBoost, Stacking, CNV y MWE)
+# 1. Pruebas unitarias e integrales (intersección GFF, semillas CV, XGBoost, Stacking, matriz CNV y MWE)
 Rscript tests/testthat.R
 
-# 2. Ejecutar el MWE completo con compilación de reportes HTML en reports/
+# 2. Ejecución completa del MWE generando los reportes HTML de prueba en reports/
 ./targetcnv.sh test
 ```
 
-### Etapas verificadas por `./targetcnv.sh test` (`./run_test_pipeline.sh`):
-1. Ejecuta `01_prepare_data.R` sobre las coordenadas simuladas y genera `data/test_data/prepared/data_prepared.rds`.
-2. Ejecuta `02_train_models.R` calculando la matriz de Spearman, los cortes de Youden y la validación cruzada determinista, compilando `reports/reporte_entrenamiento_test.html`.
-3. Ejecuta `03_cnv_inference.R` aplicando el consenso multimodelo, la regla del 50% y el barrido de sensibilidad (`30%`–`80%`), compilando `reports/reporte_inferencia_test.html` sin modificar `models/` ni `results/` en la raíz del proyecto.
+Al correr `./targetcnv.sh test` (que invoca `./run_test_pipeline.sh`), el flujo prepara los datos simulados en `data/test_data/prepared/`, entrena los clasificadores en validación cruzada dentro de `data/test_data/models/`, estima la matriz de copias en `data/test_data/results/` y compila `reports/reporte_entrenamiento_test.html` y `reports/reporte_inferencia_test.html`, dejando intactas las carpetas `models/` y `results/` de la raíz del repositorio.
 
 ---
 
-## Flujo de Ejecución
+## Ejecución del Flujo de Trabajo
 
-> [!WARNING]
-> **Descarga de modelos preentrenados desde Zenodo:**
-> Los archivos binarios `models/*.rds` no se almacenan en Git. Si desea ejecutar directamente la inferencia (`03_cnv_inference.R`) o la evaluación de transferencia (`04_evaluate_transferability.R`) sin entrenar desde cero, descargue y verifique el paquete de modelos desde el registro DOI [10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987):
-> ```bash
-> ./targetcnv.sh zenodo
-> ```
-> El subcomando verifica la suma MD5, elimina automáticamente cualquier archivo `.zip` incompleto o corrupto si la verificación falla y comprueba la presencia de `consensus_spec.rds` y de los 18 clasificadores supervisados.
+Los modelos preentrenados sobre *Solanum torvum* (`models/*.rds`) no se almacenan directamente en Git por su tamaño binario, sino en Zenodo bajo el DOI [10.5281/zenodo.23463987](https://doi.org/10.5281/zenodo.23463987). Si desea ejecutar directamente la inferencia (`03_cnv_inference.R`) o la evaluación de transferencia (`04_evaluate_transferability.R`) sin reentrenar los modelos localmente, descárguelos primero con:
 
-> [!TIP]
-> La referencia completa de opciones, interpretación estadística y resultados sobre *Solanum* se encuentra en [GUIA_EJECUCION.md](GUIA_EJECUCION.md) y [EXECUTION_GUIDE.md](EXECUTION_GUIDE.md).
+```bash
+./targetcnv.sh zenodo
+```
 
-### Script Auxiliar de Ejecución (`./targetcnv.sh`)
+Este subcomando descarga el archivo comprimido con reintentos automáticos, comprueba su suma MD5 (eliminando el `.zip` si está corrupto) y verifica que se hayan extraído `consensus_spec.rds` y los 18 modelos supervisados dentro de `models/`.
 
-| Subcomando | Ejemplo | Descripción |
+### Subcomandos disponibles en `./targetcnv.sh`
+
+| Subcomando | Ejemplo de invocación | Función principal |
 | :--- | :--- | :--- |
-| `restore` / `setup` | `./targetcnv.sh restore` | Restaura la librería local desde `renv.lock` (`renv::restore(prompt = FALSE)`). |
-| `doctor` | `./targetcnv.sh doctor` | Verifica R, `renv`, Quarto CLI, herramientas del sistema y los paquetes requeridos. |
-| `test` | `./targetcnv.sh test [--no-report]` | Ejecuta el MWE sobre datos sintéticos aislados en `data/test_data/`. |
-| `zenodo` | `./targetcnv.sh zenodo [--out-dir .]` | Descarga `TargetCNV_Models.zip`, valida MD5 y verifica los artefactos extraídos en `models/`. |
-| `prepare` | `./targetcnv.sh prepare [opciones de 01]` | Ejecuta el Módulo 01 (`scripts/01_prepare_data.R`). |
-| `train` | `./targetcnv.sh train [opciones de 02]` | Ejecuta el Módulo 02 (`scripts/02_train_models.R`). |
-| `infer` | `./targetcnv.sh infer -i stats.tsv --auto-zenodo` | Ejecuta el Módulo 03 (`scripts/03_cnv_inference.R`), descargando modelos si `models/` está vacío. |
-| `transfer` | `./targetcnv.sh transfer [--sources ...]` | Ejecuta el Módulo 04 (`scripts/04_evaluate_transferability.R`) y compila `reports/reporte_transferencia.html`. |
+| `restore` / `setup` | `./targetcnv.sh restore` | Restaura la librería R local siguiendo estrictamente `renv.lock`. |
+| `doctor` | `./targetcnv.sh doctor` | Verifica R, Quarto, herramientas del sistema y disponibilidad de paquetes. |
+| `test` | `./targetcnv.sh test [--no-report]` | Ejecuta el flujo MWE aislado sobre los datos sintéticos de `data/test_data/`. |
+| `zenodo` | `./targetcnv.sh zenodo [--out-dir .]` | Descarga y valida los modelos preentrenados desde Zenodo hacia `models/`. |
+| `prepare` | `./targetcnv.sh prepare [opciones]` | Ejecuta el Módulo 01 (`scripts/01_prepare_data.R`). |
+| `train` | `./targetcnv.sh train [opciones]` | Ejecuta el Módulo 02 (`scripts/02_train_models.R`). |
+| `infer` | `./targetcnv.sh infer -i stats.tsv --auto-zenodo` | Ejecuta el Módulo 03 (`scripts/03_cnv_inference.R`). |
+| `transfer` | `./targetcnv.sh transfer [--sources ...]` | Ejecuta el Módulo 04 (`scripts/04_evaluate_transferability.R`) y su reporte HTML. |
 | `report` | `./targetcnv.sh report [--models-dir models]` | Recompila `reports/reporte_entrenamiento.html` en modo de solo lectura. |
-| `reproduce-storvum` | `./targetcnv.sh reproduce-storvum --cores 4` | Ejecuta secuencialmente los módulos `01` $\rightarrow$ `02` $\rightarrow$ `03` sobre *Solanum torvum*. |
-| `run-all` | `./targetcnv.sh run-all -g ref.gff3 -c cap.gff -s stats.tsv -d dict.xlsx -i pop.tsv` | Ejecuta `01` $\rightarrow$ `02` $\rightarrow$ `03` para calibrar e inferir sobre una especie nueva. |
+| `reproduce-storvum` | `./targetcnv.sh reproduce-storvum --cores 4` | Reproduce secuencialmente los módulos `01` $\rightarrow$ `02` $\rightarrow$ `03` en *S. torvum*. |
+| `run-all` | `./targetcnv.sh run-all -g ref.gff3 -c cap.gff -s stats.tsv -d dict.xlsx -i pop.tsv` | Ejecuta `01` $\rightarrow$ `02` $\rightarrow$ `03` sobre los datos de una especie nueva. |
 
-> [!CAUTION]
-> **Opciones que sobrescriben o eliminan artefactos previos:**
-> - `--clean_models` (en `02_train_models.R`): elimina todos los archivos `.rds` y `.tsv` previos dentro de `--out_models` antes de guardar el nuevo entrenamiento. Úselo únicamente cuando realice un reentrenamiento completo y desee evitar que queden modelos antiguos en la misma carpeta.
-> - `--sync-root` (en `./targetcnv.sh test` o `./run_test_pipeline.sh`): copia los modelos sintéticos del MWE sobre las carpetas `models/` y `results/` de la raíz, reemplazando cualquier entrenamiento real existente. Úselo solo en entornos desechables de prueba, nunca sobre resultados reales.
+**Precaución con banderas que eliminan o sobrescriben archivos previos:**
+- `--clean_models` (en `02_train_models.R`): borra todos los archivos `.rds` y `.tsv` previos dentro de la carpeta `--out_models` antes de guardar el nuevo entrenamiento. Esta bandera es opcional (no se activa por defecto ni dentro de `reproduce-storvum`); utilícela únicamente cuando quiera limpiar por completo una carpeta de modelos antes de reentrenar desde cero.
+- `--sync-root` (en `./targetcnv.sh test` o `./run_test_pipeline.sh`): copia las salidas sintéticas del MWE sobre las carpetas `models/` y `results/` principales del proyecto. No la utilice si tiene modelos reales entrenados o descargados en `models/`.
 
-### Arquitectura Modular de Scripts y Reportes de Solo Lectura
+### Flujo de datos y plantillas Quarto de solo lectura
 
-Las tres plantillas Quarto (`training_report.qmd`, `report_template.qmd` y `transferability_report.qmd`) operan exclusivamente en **modo de solo lectura**: no entrenan modelos ni escriben en `models/` o `results/`. Si faltan artefactos precomputados, muestran un aviso indicando el comando exacto a ejecutar.
+Las tres plantillas Quarto (`training_report.qmd`, `report_template.qmd` y `transferability_report.qmd`) funcionan exclusivamente como capas de visualización de **solo lectura**: no ajustan modelos ni sobrescriben archivos en `models/` o `results/`.
 
 ```mermaid
 flowchart LR
@@ -200,10 +197,9 @@ flowchart LR
     O --> P["reports/reporte_transferencia.html"]
 ```
 
-### Módulo 01: Preparación de Datos y Etiquetado Espacial (`01_prepare_data.R`)
+### Resumen de ejecución de los cuatro módulos en R
 
-Cruza los contigs nucleares (`protein_match:NUC`) contra el GFF3 del genoma de referencia (`--genome_scale chromosome`) o extrae el locus desde el atributo `Target` reconciliando grupos `HOG_ID` y `OG_ID` (`--genome_scale contig`), integra las cuatro métricas continuas de CAPTUS y resuelve redundancias intra-locus.
-
+#### Módulo 01 (`01_prepare_data.R`)
 ```bash
 Rscript scripts/01_prepare_data.R \
   --gff_ref data/reference/Storvum_genes.gff3 \
@@ -214,25 +210,9 @@ Rscript scripts/01_prepare_data.R \
   --genome_scale chromosome \
   --out_dir data/
 ```
+Parámetros principales: `-g/--gff_ref` (GFF3 del genoma de referencia, requerido en escala `chromosome`), `-c/--captus_gff` (GFF de contigs de CAPTUS), `-s/--captus_stats` (`captus-extract_stats.tsv`), `-d/--dict_ref` (diccionario `.xlsx`/`.tsv`), `-p/--sample` (muestra a filtrar), `--genome_scale` (`chromosome` o `contig`), `--allow_multi_sample` (solo para datos sintéticos MWE) y `-o/--out_dir` (carpeta de salida, por defecto `data/`).
 
-| Opción | Argumento | Tipo | Descripción |
-| :--- | :--- | :--- | :--- |
-| `-g` | `--gff_ref` | Archivo | Anotación GFF3 del genoma de referencia (obligatorio en escala `chromosome`). |
-| `-c` | `--captus_gff` | Archivo | Archivo GFF de contigs ensamblados por CAPTUS (obligatorio). |
-| `-s` | `--captus_stats` | Archivo | Tabla `captus-extract_stats.tsv` generada por CAPTUS (obligatorio). |
-| `-d` | `--dict_ref` | Archivo | Diccionario de homología (`.xlsx`, `.tsv` o `.csv`). |
-| `-p` | `--sample` | Texto | Identificador de muestra a filtrar dentro de `captus-extract_stats.tsv`. |
-| | `--genome_scale` | Texto | `'chromosome'` (intersección espacial GFF3; por defecto) o `'contig'` (extracción desde `Target` para ensamblajes fragmentados). |
-| | `--target_mode` | Texto | Alias explícito del método de cruce: `'overlap'` o `'target_attr'`. |
-| | `--allow_multi_sample` | Bandera | Permite procesar múltiples muestras en un mismo cruce (por ejemplo, en el MWE). |
-| `-o` | `--out_dir` | Carpeta | Directorio de salida para `data_prepared.rds` y `data_prepared.tsv` (por defecto: `data/`). |
-
----
-
-### Módulo 02: Colinealidad, Entrenamiento Determinista y SHAP (`02_train_models.R`)
-
-Evalúa la colinealidad por rangos de Spearman entre `pct_recovered`, `pct_identity`, `score` y `wscore`, calcula los umbrales de Youden y el modelo heurístico ponderado, entrena los 18 clasificadores supervisados y `Ensamble_Stacking` con particiones y lista `seeds` deterministas derivadas de `--seed` (reproducibilidad idéntica con independencia de `--cores`), calcula valores KernelSHAP y compila `reports/reporte_entrenamiento.html`.
-
+#### Módulo 02 (`02_train_models.R`)
 ```bash
 Rscript scripts/02_train_models.R \
   --data data/data_prepared.rds \
@@ -244,29 +224,9 @@ Rscript scripts/02_train_models.R \
   --sources data/reference/sources_citations.tsv \
   --report_file reports/reporte_entrenamiento.html
 ```
+Parámetros principales: `-d/--data` (`data_prepared.rds`), `-m/--out_models` (`models/`), `-k/--cv_folds` (`5`), `-s/--sampling` (`down`, `up` o `none`), `-c/--cores` (núcleos PSOCK), `--seed` (semilla maestra que fija particiones y `seeds` de `trainControl`), `--fast_tournament` (subconjunto rápido de 5 modelos), `--no_stacking`, `--clean_models` (borrado previo de `--out_models`), `--include_hit` y `-r/--report_file`.
 
-| Opción | Argumento | Tipo | Descripción |
-| :--- | :--- | :--- | :--- |
-| `-d` | `--data` | Archivo | Archivo `data_prepared.rds` o `.tsv` generado en el Módulo 01 (obligatorio). |
-| `-m` | `--out_models` | Carpeta | Directorio de salida para artefactos `.rds` y `.tsv` (por defecto: `models/`). |
-| `-k` | `--cv_folds` | Entero | Número de pliegues de validación cruzada estratificada (por defecto: `5`). |
-| `-s` | `--sampling` | Texto | Esquema de balanceo para el escenario balanceado: `down`, `up` o `none` (por defecto: `down`). |
-| `-c` | `--cores` | Entero | Número de núcleos paralelos PSOCK (por defecto: `detectCores() - 1`). |
-| | `--seed` | Entero | Semilla maestra para particiones, rejillas y `seeds` de `trainControl` (por defecto: `1234`). |
-| | `--extended_tournament` / `--fast_tournament` | Bandera | Evalúa los 18 algoritmos ML (por defecto) o el subconjunto rápido de 5 modelos (`--fast_tournament`). |
-| | `--train_stacking` / `--no_stacking` | Bandera | Ajusta (por defecto) u omite el meta-modelo `Ensamble_Stacking`. |
-| | `--clean_models` | Bandera | **Operación destructiva:** borra `.rds`/`.tsv` existentes en `--out_models` antes de guardar. |
-| | `--include_hit` | Bandera | Añade el índice ordinal `hit` como quinto predictor (`consensus_spec.rds` lo propaga al Módulo 03, aunque se recomienda mantenerlo desactivado para generalizar entre lotes). |
-| | `--render_report` / `--no_render_report` | Bandera | Compila (por defecto) u omite el reporte HTML en Quarto. |
-| `-r` | `--report_file` | Archivo | Ruta del reporte HTML compilado (por defecto: `reports/reporte_entrenamiento.html`). |
-| | `--sources` | Archivo | Tabla TSV opcional con metadatos y citas bibliográficas (`data/reference/sources_citations.tsv`). |
-
----
-
-### Módulo 03: Inferencia de CNV y Calibración del Umbral de Cobertura (`03_cnv_inference.R`)
-
-Aplica el consenso de 7 modelos ($\ge 4/7$ votos), estima la matriz `Locus x Muestra` con la regla de cobertura individual (`--cov_threshold 50.0`), exporta la curva de sensibilidad del umbral entre `30%` y `80%` (`cnv_threshold_sensitivity.tsv`), calcula la concordancia de copias por ortogrupo cuando el archivo de entrada posee etiquetas de referencia o se proporciona `--true_cnv`, y compila `reports/reporte_inferencia.html`.
-
+#### Módulo 03 (`03_cnv_inference.R`)
 ```bash
 Rscript scripts/03_cnv_inference.R \
   --input data/CAPTUS_Muestras/captus-extract_stats.tsv \
@@ -278,38 +238,22 @@ Rscript scripts/03_cnv_inference.R \
   --sources data/reference/sources_citations.tsv \
   --report_file reports/reporte_inferencia.html
 ```
+Parámetros principales: `-i/--input` (estadísticas de extracción CAPTUS), `-m/--models_dir` (`models/`), `-o/--out_dir` (`results/`), `-c/--cov_threshold` (`50.0`), `-v/--min_votes` (`4` de 7 votos), `-t/--top_loci` (`30`), `--true_cnv` (conteos reales opcionales para concordancia) y `-r/--report_file`.
 
-| Opción | Argumento | Tipo | Descripción |
-| :--- | :--- | :--- | :--- |
-| `-i` | `--input` | Archivo | Archivo TSV/CSV/RDS con estadísticas de extracción CAPTUS (obligatorio). |
-| `-m` | `--models_dir` | Carpeta | Directorio con los modelos entrenados y `consensus_spec.rds` (por defecto: `models/`). |
-| `-o` | `--out_dir` | Carpeta | Carpeta de salida para matrices, tablas de sensibilidad y figuras (por defecto: `results/`). |
-| `-c` | `--cov_threshold` | Decimal | Cobertura mínima (`pct_recovered`, en %) para contabilizar copias adicionales (por defecto: `50.0`). |
-| `-v` | `--min_votes` | Entero | Votos mínimos (sobre 7) para aceptar una secuencia como `Homologo_Valido` (por defecto: `4`). |
-| `-t` | `--top_loci` | Entero | Número de ortogrupos con mayor número de copias mostrados en el mapa de calor (por defecto: `30`). |
-| | `--true_cnv` | Archivo | Matriz o tabla opcional con conteos reales de referencia ($\text{CNV}^{\text{real}}_{\text{OG}}$) para evaluar concordancia. |
-| | `--render_report` / `--no_render_report` | Bandera | Compila (por defecto) u omite `reports/reporte_inferencia.html`. |
-| `-r` | `--report_file` | Archivo | Ruta del reporte HTML de inferencia (por defecto: `reports/reporte_inferencia.html`). |
-| | `--sources` | Archivo | Archivo TSV opcional con citas de las fuentes genómicas (`data/reference/sources_citations.tsv`). |
-
----
-
-### Módulo 04: Transferencia Filogenética y Concordancia por Ortogrupo (`04_evaluate_transferability.R`)
-
-Evalúa sin reajuste los 24 métodos entrenados y el consenso de 7 modelos sobre especies receptoras con genoma a escala cromosómica (*S. citrullifolium*) o a escala de contigs (*S. stellatiglandulosum*), calcula la concordancia de número de copias por ortogrupo ($\rho$ de Spearman, Kappa cuadrático ponderado, RMSE y concordancia exacta) junto con la curva de calibración de `--cov_threshold` (`30%`–`80%`), exporta todos los resultados a `results/transferability_*.tsv|.rds` y compila `reports/reporte_transferencia.html`.
-
+#### Módulo 04 (`04_evaluate_transferability.R`)
 ```bash
 ./targetcnv.sh transfer --sources data/reference/sources_citations.tsv
 ```
+Para una explicación detallada de cada opción, tablas de benchmark en *Solanum* y flujos paso a paso, consulte [GUIA_EJECUCION.md](GUIA_EJECUCION.md) (o [EXECUTION_GUIDE.md](EXECUTION_GUIDE.md) en inglés).
 
 ---
 
-## Citación y Fuentes de Datos de Referencia
+## Fuentes Genómicas y Citación
 
-- **Genomas de referencia a escala cromosómica (*Solanum torvum* y *Solanum citrullifolium*):** Disponibles en **Solanum Pan-Genomics** (https://solpangenomics.com/dist/pages/downloads/index.php), **Solanaceae Genomics Network (SGN)** (https://solgenomics.net/ftp/genomes/Solanum_pangenomics/) y **NCBI BioProject `PRJNA1073673`** (https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673). Datos de genes y ortogrupos (`OG_ID`): **Benoit, M. *et al.*** (2025), *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*, **Nature**, 640(8057): 135–145, [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
-- **Genoma de referencia a escala de contigs (*Solanum stellatiglandulosum*):** Registrado en **NCBI BioProject `PRJNA1070281`** (https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D) por el **Grupo de Genómica Evolutiva del Metabolismo Especializado de la Universidad Nacional de Colombia**. Datos de genes y homología jerárquica (`HOG_ID`): **Pérez-Mesa, P. A. & Roda, F.** (2025), *Alkaloid evolution in the solanaceae*, **Current Opinion in Plant Biology**, 85: 102727, [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A., Pardo, R. A., Alseekh, S. *et al.*** (2026), *Genetic basis of alkaloid divergence in the solanaceae*, **Plant Molecular Biology**, 116: 67, [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
+- **Genomas a escala cromosómica (*Solanum torvum* y *Solanum citrullifolium*):** Disponibles en **Solanum Pan-Genomics** (https://solpangenomics.com/dist/pages/downloads/index.php), **Solanaceae Genomics Network (SGN)** (https://solgenomics.net/ftp/genomes/Solanum_pangenomics/) y **NCBI BioProject `PRJNA1073673`** (https://www.ncbi.nlm.nih.gov/bioproject/PRJNA1073673). Anotaciones de genes y ortogrupos (`OG_ID`) tomadas de **Benoit, M. *et al.*** (2025), *Solanum pan-genetics reveals paralogues as contingencies in crop engineering*, **Nature**, 640(8057): 135-145, [doi:10.1038/s41586-025-08619-6](https://doi.org/10.1038/s41586-025-08619-6).
+- **Genoma a escala de contigs (*Solanum stellatiglandulosum*):** Depositado en **NCBI BioProject `PRJNA1070281`** (https://www.ncbi.nlm.nih.gov/bioproject/?term=txid3132602%5BOrganism:noexp%5D) por el **Grupo de Genómica Evolutiva del Metabolismo Especializado de la Universidad Nacional de Colombia**. Anotaciones de genes y grupos jerárquicos de ortólogos (`HOG_ID`) descritas en **Pérez-Mesa, P. A. & Roda, F.** (2025), *Alkaloid evolution in the solanaceae*, **Current Opinion in Plant Biology**, 85: 102727, [doi:10.1016/j.pbi.2025.102727](https://doi.org/10.1016/j.pbi.2025.102727); y **Pérez-Mesa, P. A., Pardo, R. A., Alseekh, S. *et al.*** (2026), *Genetic basis of alkaloid divergence in the solanaceae*, **Plant Molecular Biology**, 116: 67, [doi:10.1007/s11103-026-01718-6](https://doi.org/10.1007/s11103-026-01718-6).
 
-Si emplea **TargetCNV-ML** en su investigación, por favor cite el software y la tesis asociada:
+Si utiliza este repositorio o sus modelos en un trabajo académico, por favor cite el paquete y el documento de tesis de maestría:
 
 ```bibtex
 @software{targetcnv_ml_2026,
@@ -337,4 +281,4 @@ Si emplea **TargetCNV-ML** en su investigación, por favor cite el software y la
 
 ## Licencia
 
-Distribuido bajo la **Licencia MIT** — véase [LICENSE](LICENSE). Los conjuntos de datos derivados y los modelos serializados depositados en Zenodo se distribuyen bajo **Creative Commons Atribución 4.0 Internacional (CC BY 4.0)**.
+El código fuente se distribuye bajo la **Licencia MIT** (véase el archivo [LICENSE](LICENSE)). Los datos procesados y los modelos entrenados alojados en Zenodo se publican bajo licencia **Creative Commons Atribución 4.0 Internacional (CC BY 4.0)**.

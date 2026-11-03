@@ -216,7 +216,7 @@ if (has_models && !is.null(tr_art$bench_bal)) {
     other_df = tr_art$bench_unbal,
     current_scen = "Balanceado",
     other_scen = "Desbalanceado",
-    caption_text = "Tabla comparativa completa en validación cruzada — Escenario Balanceado"
+    caption_text = "Tabla comparativa completa en validación cruzada: Escenario Balanceado"
   )
 }
 ```
@@ -262,7 +262,7 @@ if (has_models && !is.null(tr_art$bench_unbal)) {
     other_df = tr_art$bench_bal,
     current_scen = "Desbalanceado",
     other_scen = "Balanceado",
-    caption_text = "Tabla comparativa completa en validación cruzada — Escenario Desbalanceado"
+    caption_text = "Tabla comparativa completa en validación cruzada: Escenario Desbalanceado"
   )
 }
 ```
@@ -306,7 +306,7 @@ if (!is.null(tr_art$shap_obj_bal)) {
 ### Explorador Individual por Secuencia (Waterfall Interactivo)
 
 ```{r shap_explorer, results="asis"}
-render_shap_waterfall_html(tr_art$shap_obj_bal, tr_art$df_ml_report)
+render_shap_waterfall_html(tr_art$shap_obj_bal, tr_art$df_ml_report, proj_root = proj_root)
 ```
 
 :::
