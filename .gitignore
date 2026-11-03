@@ -65,6 +65,9 @@ archive/
 # Salidas locales
 results/*
 !results/.gitkeep
+reports/*
+!reports/.gitkeep
+!reports/*.zip
 *.knit.md
 
 # Archivos del SO
