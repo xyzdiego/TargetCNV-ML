@@ -14,18 +14,13 @@ suppressPackageStartupMessages({
   library(pROC)
 })
 
-get_project_root <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    script_dir <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
-    if (basename(script_dir) == "scripts") dirname(script_dir) else script_dir
-  } else {
-    getwd()
-  }
+file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+project_root <- if (length(file_arg) > 0) {
+  sd <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  if (basename(sd) == "scripts") dirname(sd) else sd
+} else {
+  getwd()
 }
-
-project_root <- get_project_root()
 source(file.path(project_root, "R", "model_specs.R"))
 source(file.path(project_root, "R", "model_evaluation.R"))
 source(file.path(project_root, "R", "data_processing.R"))
@@ -171,20 +166,14 @@ if (is.na(opt$cores) || opt$cores < 1L) {
   stop("[ERROR] --cores debe ser un entero >= 1.", call. = FALSE)
 }
 
-cat("========================================================\n")
-cat(" TargetCNV-ML: Módulo 02 - Entrenamiento y Validación Cruzada\n")
-cat("========================================================\n")
-cat(sprintf("Archivo de datos          : %s\n", opt$data))
-cat(sprintf("Directorio modelos (.rds) : %s\n", opt$out_models))
-cat(sprintf("Folds CV                  : %d\n", opt$cv_folds))
-cat(sprintf("Balanceo de Clases        : %s\n", opt$sampling))
-cat(sprintf("Esquema de Modelos        : %s\n", if (opt$extended_tournament) "Completo (18 clasificadores ML)" else "Rápido (5 clasificadores ML)"))
-cat(sprintf("Meta-Modelo Stacking      : %s\n", if (opt$train_stacking) "SI" else "NO"))
-cat(sprintf("Núcleos Paralelos         : %d\n", opt$cores))
-cat(sprintf("Semilla Determinista      : %d\n", opt$seed))
-cat(sprintf("Compilar Reporte HTML     : %s\n", if (opt$render_report) "SI" else "NO"))
-if (opt$render_report) cat(sprintf("Reporte HTML de salida    : %s\n", opt$report_file))
-cat("--------------------------------------------------------\n")
+cat("[02_train_models] Entrenamiento supervisado y validación cruzada\n")
+cat(sprintf("  datos: %s | salida: %s\n", opt$data, opt$out_models))
+cat(sprintf("  cv_folds: %d | sampling: %s | seed: %d | cores: %d\n",
+            opt$cv_folds, opt$sampling, opt$seed, opt$cores))
+cat(sprintf("  esquema: %s | stacking: %s | reporte: %s\n",
+            if (opt$extended_tournament) "completo (18 ML)" else "rápido (5 ML)",
+            if (opt$train_stacking) "sí" else "no",
+            if (opt$render_report) opt$report_file else "omitido"))
 
 # 1. Carga y verificación de datos preparados
 cat("[1/8] Cargando datos preparados...\n")
@@ -410,7 +399,16 @@ train_tournament <- function(control_obj, scenario_label) {
         model_name = "Ensamble_Stacking"
       )
       cms[["Ensamble_Stacking"]] <- table(Prediccion = preds_stack, Referencia = y_train)
-      cat(sprintf("OK (%s)\n", paste(top2_names, collapse = " + ")))
+      oof_pred <- ens_stack$ens_model$pred
+      oof_auc <- if (!is.null(oof_pred) && "TP" %in% colnames(oof_pred)) {
+        compute_classification_metrics(
+          pred = oof_pred$pred, obs = oof_pred$obs, score = oof_pred$TP,
+          positive_class = "TP", model_name = "Ensamble_Stacking_OOF"
+        )$ROC_AUC
+      } else {
+        NA_real_
+      }
+      cat(sprintf("OK (%s | OOF ROC-AUC: %.3f)\n", paste(top2_names, collapse = " + "), oof_auc))
     }, error = function(e) {
       cat(sprintf("[OMITIDO: %s]\n", e$message))
     })
@@ -618,7 +616,20 @@ if (!opt$render_report) {
 } else {
   out_html <- normalizePath(opt$report_file, mustWork = FALSE)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
-  rendered_in_root <- file.path(dirname(qmd_file), basename(out_html))
+
+  render_qmd <- qmd_file
+  tmp_render_dir <- NULL
+  if (file.access(dirname(qmd_file), 2) != 0) {
+    tmp_render_dir <- tempfile("targetcnv_qmd_")
+    dir.create(tmp_render_dir, recursive = TRUE, showWarnings = FALSE)
+    file.copy(qmd_file, file.path(tmp_render_dir, basename(qmd_file)), overwrite = TRUE)
+    assets_src <- file.path(project_root, "assets")
+    if (dir.exists(assets_src)) {
+      file.copy(assets_src, tmp_render_dir, recursive = TRUE)
+    }
+    render_qmd <- file.path(tmp_render_dir, basename(qmd_file))
+  }
+  rendered_in_root <- file.path(dirname(render_qmd), basename(out_html))
 
   src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) {
     sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE)))
@@ -627,7 +638,7 @@ if (!opt$render_report) {
   }
   cmd_quarto <- sprintf(
     "quarto render %s --output %s -P project_root:%s -P data_path:%s -P data_file:%s -P models_dir:%s%s",
-    shQuote(qmd_file),
+    shQuote(render_qmd),
     shQuote(basename(out_html)),
     shQuote(project_root),
     shQuote(normalizePath(opt$data, mustWork = FALSE)),
@@ -646,18 +657,16 @@ if (!opt$render_report) {
   } else {
     cat(sprintf("   -> [AVISO] Falló el renderizado con Quarto (código de retorno: %d).\n", res_q))
   }
+  if (!is.null(tmp_render_dir) && dir.exists(tmp_render_dir)) {
+    unlink(tmp_render_dir, recursive = TRUE)
+  }
 }
 
 elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
-cat("--------------------------------------------------------\n")
 options(width = 200)
-cat(sprintf(" BENCHMARK COMPARATIVO FINAL - ESCENARIO BALANCEADO (%d METODOS):\n", nrow(df_benchmark_bal)))
-cat("--------------------------------------------------------\n")
+cat(sprintf("\nBenchmark final - escenario balanceado (%d métodos):\n", nrow(df_benchmark_bal)))
 print(df_benchmark_bal %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)), digits = 3)
-cat("--------------------------------------------------------\n")
-cat(sprintf(" BENCHMARK COMPARATIVO FINAL - ESCENARIO DESBALANCEADO (%d METODOS):\n", nrow(df_benchmark_unbal)))
-cat("--------------------------------------------------------\n")
+cat(sprintf("\nBenchmark final - escenario desbalanceado (%d métodos):\n", nrow(df_benchmark_unbal)))
 print(df_benchmark_unbal %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score)), digits = 3)
-cat("========================================================\n")
-cat(sprintf("[OK] Artefactos serializados en: %s (Tiempo total: %.2f s)\n", opt$out_models, elapsed_sec))
+cat(sprintf("\nArtefactos guardados en %s (%.2f s)\n", opt$out_models, elapsed_sec))

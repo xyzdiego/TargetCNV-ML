@@ -11,19 +11,14 @@ suppressPackageStartupMessages({
   library(tidyr)
 })
 
-# Ubicación dinámica del proyecto y carga de módulos
-get_project_root <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    script_dir <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
-    if (basename(script_dir) == "scripts") dirname(script_dir) else script_dir
-  } else {
-    getwd()
-  }
+# Raíz del repositorio según la ubicación del script
+file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+project_root <- if (length(file_arg) > 0) {
+  sd <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  if (basename(sd) == "scripts") dirname(sd) else sd
+} else {
+  getwd()
 }
-
-project_root <- get_project_root()
 source(file.path(project_root, "R", "data_processing.R"))
 
 # Definición de argumentos CLI con optparse
@@ -152,19 +147,16 @@ if (!dir.exists(opt$out_dir)) {
   dir.create(opt$out_dir, recursive = TRUE, showWarnings = FALSE)
 }
 
-cat("========================================================\n")
-cat(" TargetCNV-ML: Módulo 01 - Preparación de Datos y Cruce Espacial \n")
-cat("========================================================\n")
-cat(sprintf("Escala del Genoma        : %s (%s)\n",
-            if (opt$genome_scale == "chromosome") "Cromosómica" else "Contigs (Fragmentado)",
+cat("[01_prepare_data] Preparación de datos y cruce espacial\n")
+cat(sprintf("  escala: %s (%s)\n",
+            if (opt$genome_scale == "chromosome") "cromosómica" else "contigs",
             opt$target_mode))
-if (!is.null(opt$gff_ref)) cat(sprintf("Genoma de Referencia GFF : %s\n", opt$gff_ref))
-cat(sprintf("CAPTUS Contigs GFF       : %s\n", opt$captus_gff))
-cat(sprintf("Estadísticas CAPTUS      : %s\n", opt$captus_stats))
-if (!is.null(opt$dict_ref)) cat(sprintf("Diccionario de Homología : %s\n", opt$dict_ref))
-if (!is.null(opt$sample))   cat(sprintf("Filtro de Muestra        : %s\n", opt$sample))
-cat(sprintf("Directorio de Salida     : %s\n", opt$out_dir))
-cat("--------------------------------------------------------\n")
+if (!is.null(opt$gff_ref)) cat(sprintf("  gff_ref: %s\n", opt$gff_ref))
+cat(sprintf("  captus_gff: %s\n", opt$captus_gff))
+cat(sprintf("  captus_stats: %s\n", opt$captus_stats))
+if (!is.null(opt$dict_ref)) cat(sprintf("  dict_ref: %s\n", opt$dict_ref))
+if (!is.null(opt$sample))   cat(sprintf("  sample: %s\n", opt$sample))
+cat(sprintf("  out_dir: %s\n", opt$out_dir))
 
 # 1. Carga de anotaciones GFF
 cat("[1/6] Cargando y filtrando anotaciones GFF...\n")
@@ -310,17 +302,10 @@ saveRDS(stats_preparado, file = out_rds)
 
 elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
-cat("--------------------------------------------------------\n")
-cat(" RESUMEN FINAL DE PREPARACIÓN\n")
-cat("--------------------------------------------------------\n")
-cat(sprintf("Total secuencias analizadas (NUC) : %d\n", nrow(stats_preparado)))
-cat(sprintf("Verdaderos Positivos (TP)         : %d\n", sum(stats_preparado$Validacion_Espacial == "TRUE_POSITIVE")))
-cat(sprintf("Falsos Positivos & Redundantes    : %d\n", sum(stats_preparado$Validacion_Espacial == "FALSE_POSITIVE")))
-cat("\nDesglose de Origen Biológico (Doble Control):\n")
+cat("\nResumen de preparación:\n")
+cat(sprintf("  secuencias NUC: %d | TP: %d | FP/redundantes: %d\n",
+            nrow(stats_preparado),
+            sum(stats_preparado$Validacion_Espacial == "TRUE_POSITIVE"),
+            sum(stats_preparado$Validacion_Espacial == "FALSE_POSITIVE")))
 print(table(stats_preparado$Doble_Control_Biologico))
-cat("--------------------------------------------------------\n")
-cat(sprintf("Archivo TSV generado              : %s\n", out_tsv))
-cat(sprintf("Archivo RDS generado              : %s\n", out_rds))
-cat(sprintf("Tiempo de ejecución               : %.2f s\n", elapsed_sec))
-cat("========================================================\n")
-cat("[OK] Proceso completado con éxito.\n")
+cat(sprintf("Salidas: %s | %s (%.2f s)\n", out_tsv, out_rds, elapsed_sec))

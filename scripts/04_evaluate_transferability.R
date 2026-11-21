@@ -16,18 +16,13 @@ suppressPackageStartupMessages({
   library(pROC)
 })
 
-get_project_root <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    script_dir <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
-    if (basename(script_dir) == "scripts") dirname(script_dir) else script_dir
-  } else {
-    getwd()
-  }
+file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+project_root <- if (length(file_arg) > 0) {
+  sd <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  if (basename(sd) == "scripts") dirname(sd) else sd
+} else {
+  getwd()
 }
-
-project_root <- get_project_root()
 source(file.path(project_root, "R", "model_specs.R"))
 source(file.path(project_root, "R", "data_processing.R"))
 source(file.path(project_root, "R", "model_evaluation.R"))
@@ -102,7 +97,7 @@ option_list <- list(
     c("--extra_species"),
     type = "character",
     default = "",
-    help = "Especies adicionales separadas por ';' con formato 'Muestra|Nombre Cientifico|chromosome_o_contig|ruta_datos.rds'",
+    help = "Especies adicionales separadas por ';' con formato 'Muestra|Nombre Científico|chromosome_o_contig|ruta_datos.rds'",
     metavar = "STR"
   ),
   make_option(
@@ -189,16 +184,11 @@ if (!dir.exists(opt$out_dir)) {
   dir.create(opt$out_dir, recursive = TRUE, showWarnings = FALSE)
 }
 
-cat("========================================================\n")
-cat(" TargetCNV-ML: Módulo 04 - Transferencia Filogenética y Concordancia CNV\n")
-cat("========================================================\n")
-cat(sprintf("Directorio de Modelos       : %s\n", opt$models_dir))
-cat(sprintf("Datos Donante (S. torvum)   : %s\n", opt$donor_data))
-cat(sprintf("Datos S. citrullifolium     : %s\n", opt$cit_data))
-cat(sprintf("Datos S. stellatiglandulosum: %s\n", opt$ste_data))
-cat(sprintf("Directorio de Salida        : %s\n", opt$out_dir))
-cat(sprintf("Umbral Cobertura Homólogo   : %.1f%%\n", opt$cov_threshold))
-cat("--------------------------------------------------------\n")
+cat("[04_evaluate_transferability] Transferencia filogenética y concordancia CNV\n")
+cat(sprintf("  models_dir: %s | out_dir: %s | cov_threshold: %.1f%%\n",
+            opt$models_dir, opt$out_dir, opt$cov_threshold))
+cat(sprintf("  donante: %s | citrullifolium: %s | stellatiglandulosum: %s\n",
+            opt$donor_data, opt$cit_data, opt$ste_data))
 
 # 1. Carga en modo de solo lectura de los modelos preentrenados en S. torvum
 cat("[1/6] Cargando modelos preentrenados en la especie donante...\n")
@@ -605,7 +595,20 @@ if (!opt$render_report) {
 } else {
   out_html <- normalizePath(opt$report_file, mustWork = FALSE)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
-  rendered_in_root <- file.path(dirname(qmd_tr), basename(out_html))
+
+  render_qmd <- qmd_tr
+  tmp_render_dir <- NULL
+  if (file.access(dirname(qmd_tr), 2) != 0) {
+    tmp_render_dir <- tempfile("targetcnv_qmd_")
+    dir.create(tmp_render_dir, recursive = TRUE, showWarnings = FALSE)
+    file.copy(qmd_tr, file.path(tmp_render_dir, basename(qmd_tr)), overwrite = TRUE)
+    assets_src <- file.path(project_root, "assets")
+    if (dir.exists(assets_src)) {
+      file.copy(assets_src, tmp_render_dir, recursive = TRUE)
+    }
+    render_qmd <- file.path(tmp_render_dir, basename(qmd_tr))
+  }
+  rendered_in_root <- file.path(dirname(render_qmd), basename(out_html))
 
   src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) {
     sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE)))
@@ -614,7 +617,7 @@ if (!opt$render_report) {
   }
   cmd_quarto <- sprintf(
     "quarto render %s --output %s -P project_root:%s -P models_dir:%s -P out_dir:%s -P results_rds:%s%s",
-    shQuote(qmd_tr),
+    shQuote(render_qmd),
     shQuote(basename(out_html)),
     shQuote(project_root),
     shQuote(normalizePath(opt$models_dir, mustWork = FALSE)),
@@ -633,13 +636,15 @@ if (!opt$render_report) {
   } else {
     cat(sprintf("   -> [AVISO] Falló el renderizado con Quarto (código de retorno: %d).\n", res_q))
   }
+  if (!is.null(tmp_render_dir) && dir.exists(tmp_render_dir)) {
+    unlink(tmp_render_dir, recursive = TRUE)
+  }
 }
 
 elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
-cat("--------------------------------------------------------\n")
 if (nrow(df_cnv_concordance) > 0) {
-  cat(" CONCORDANCIA DE NUMERO DE COPIAS A NIVEL DE ORTOGRUPO:\n")
+  cat("\nConcordancia de número de copias a nivel de ortogrupo (S. torvum en muestra donante; receptoras sin reentrenamiento):\n")
   print(
     df_cnv_concordance %>%
       dplyr::mutate(
@@ -651,6 +656,5 @@ if (nrow(df_cnv_concordance) > 0) {
     row.names = FALSE
   )
 }
-cat("========================================================\n")
-cat(sprintf("[OK] Artefactos de transferencia guardados en: %s (%.2f s)\n", opt$out_dir, elapsed_sec))
+cat(sprintf("\nArtefactos de transferencia guardados en %s (%.2f s)\n", opt$out_dir, elapsed_sec))
 

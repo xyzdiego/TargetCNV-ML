@@ -15,18 +15,13 @@ suppressPackageStartupMessages({
   library(pROC)
 })
 
-get_project_root <- function() {
-  args <- commandArgs(trailingOnly = FALSE)
-  file_arg <- grep("^--file=", args, value = TRUE)
-  if (length(file_arg) > 0) {
-    script_dir <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
-    if (basename(script_dir) == "scripts") dirname(script_dir) else script_dir
-  } else {
-    getwd()
-  }
+file_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+project_root <- if (length(file_arg) > 0) {
+  sd <- dirname(normalizePath(sub("^--file=", "", file_arg[1])))
+  if (basename(sd) == "scripts") dirname(sd) else sd
+} else {
+  getwd()
 }
-
-project_root <- get_project_root()
 source(file.path(project_root, "R", "model_specs.R"))
 source(file.path(project_root, "R", "data_processing.R"))
 source(file.path(project_root, "R", "model_evaluation.R"))
@@ -140,20 +135,15 @@ if (!dir.exists(opt$out_dir)) {
   dir.create(opt$out_dir, recursive = TRUE, showWarnings = FALSE)
 }
 
-cat("========================================================\n")
-cat(" TargetCNV-ML: Módulo 03 - Inferencia de CNV y Consenso Multimodelo\n")
-cat("========================================================\n")
-cat(sprintf("Archivo de Entrada (CAPTUS) : %s\n", opt$input))
-cat(sprintf("Directorio de Modelos (.rds): %s\n", opt$models_dir))
-cat(sprintf("Directorio de Salida        : %s\n", opt$out_dir))
-cat(sprintf("Umbral Cobertura Homólogo   : %.1f%%\n", opt$cov_threshold))
-cat(sprintf("Votos Mínimos Consenso      : %d / 7\n", opt$min_votes))
-cat("--------------------------------------------------------\n")
+cat("[03_cnv_inference] Inferencia de CNV y consenso multimodelo\n")
+cat(sprintf("  input: %s | models_dir: %s | out_dir: %s\n", opt$input, opt$models_dir, opt$out_dir))
+cat(sprintf("  cov_threshold: %.1f%% | min_votes: %d\n", opt$cov_threshold, opt$min_votes))
 
 # 1. Carga de modelos y umbrales serializados
 cat("[1/8] Cargando clasificadores serializados y umbrales optimizados...\n")
 youden_file    <- file.path(opt$models_dir, "youden_thresholds.rds")
 heuristic_file <- file.path(opt$models_dir, "heuristic_model.rds")
+spec_file      <- file.path(opt$models_dir, "consensus_spec.rds")
 
 if (!file.exists(youden_file)) {
   stop(sprintf("[ERROR] No se encontró 'youden_thresholds.rds' en %s. Ejecute primero ./targetcnv.sh train", opt$models_dir), call. = FALSE)
@@ -164,30 +154,47 @@ if (!file.exists(heuristic_file)) {
 
 youden_thresholds <- readRDS(youden_file)
 heuristic_model   <- readRDS(heuristic_file)
+consensus_spec    <- if (file.exists(spec_file)) readRDS(spec_file) else NULL
 
-posibles_modelos <- list(
-  ElasticNet     = file.path(opt$models_dir, "model_elasticnet.rds"),
-  NaiveBayes     = file.path(opt$models_dir, "model_naivebayes.rds"),
-  SVM_Polinomial = file.path(opt$models_dir, "model_svm_polinomial.rds"),
-  Red_Neuronal   = file.path(opt$models_dir, "model_red_neuronal.rds"),
-  LDA            = file.path(opt$models_dir, "model_lda.rds"),
-  MLP            = file.path(opt$models_dir, "model_mlp.rds")
-)
+voters_objetivo <- if (!is.null(consensus_spec) && !is.null(consensus_spec$ml_voters)) {
+  as.character(consensus_spec$ml_voters)
+} else {
+  c("ElasticNet", "NaiveBayes", "SVM_Polinomial", "Red_Neuronal")
+}
 
+# Carga dinámica respetando consensus_spec$ml_voters y modelos de respaldo habituales
+candidate_names <- unique(c(
+  voters_objetivo,
+  "ElasticNet", "NaiveBayes", "SVM_Polinomial", "Red_Neuronal", "LDA", "MLP"
+))
 ml_models <- list()
-for (m_name in names(posibles_modelos)) {
-  m_path <- posibles_modelos[[m_name]]
+for (m_name in candidate_names) {
+  safe_fn <- gsub("_+", "_", gsub("^_|_$", "", gsub("[^a-z0-9_]", "_", tolower(m_name))))
+  m_path <- file.path(opt$models_dir, sprintf("model_%s.rds", safe_fn))
   if (file.exists(m_path)) {
     ml_models[[m_name]] <- readRDS(m_path)
     cat(sprintf("   -> Clasificador cargado: %s\n", m_name))
   }
 }
 
-if (length(ml_models) == 0 && file.exists(file.path(opt$models_dir, "all_trained_models.rds"))) {
-  ml_models <- normalize_model_names(readRDS(file.path(opt$models_dir, "all_trained_models.rds")))
-  cat(sprintf("   -> Cargados %d modelos desde all_trained_models.rds\n", length(ml_models)))
+# Si algún votante solicitado no estaba como archivo individual, completar desde la lista agrupada
+missing_voters <- setdiff(voters_objetivo, names(ml_models))
+if (length(ml_models) == 0L || length(missing_voters) > 0L) {
+  bundle_candidates <- c(
+    file.path(opt$models_dir, "models_balanced.rds"),
+    file.path(opt$models_dir, "all_trained_models.rds")
+  )
+  bundle_path <- bundle_candidates[file.exists(bundle_candidates)][1]
+  if (!is.na(bundle_path) && file.exists(bundle_path)) {
+    bundled <- normalize_model_names(readRDS(bundle_path))
+    to_add <- if (length(ml_models) == 0L) names(bundled) else intersect(missing_voters, names(bundled))
+    for (bn in to_add) {
+      ml_models[[bn]] <- bundled[[bn]]
+      cat(sprintf("   -> Clasificador cargado desde %s: %s\n", basename(bundle_path), bn))
+    }
+  }
 }
-if (length(ml_models) == 0) {
+if (length(ml_models) == 0L) {
   stop("[ERROR] No se encontró ningún modelo supervisado serializado en --models_dir.", call. = FALSE)
 }
 
@@ -211,8 +218,6 @@ if (length(columnas_faltantes) > 0) {
 }
 
 metricas_numericas <- c("pct_recovered", "pct_identity", "score", "wscore")
-spec_file <- file.path(opt$models_dir, "consensus_spec.rds")
-consensus_spec <- if (file.exists(spec_file)) readRDS(spec_file) else NULL
 
 predictores_ml <- if (!is.null(consensus_spec) && !is.null(consensus_spec$predictors)) {
   consensus_spec$predictors
@@ -243,13 +248,8 @@ cat("[3/8] Aplicando votación de consenso de 7 modelos...\n")
 df_eval <- df_inferencia
 modelos_votantes <- character()
 
-voters_objetivo <- if (!is.null(consensus_spec) && !is.null(consensus_spec$ml_voters)) {
-  consensus_spec$ml_voters
-} else {
-  c("ElasticNet", "NaiveBayes", "SVM_Polinomial", "Red_Neuronal")
-}
 preferidos_ml <- intersect(voters_objetivo, names(ml_models))
-top_ml_names  <- if (length(preferidos_ml) == 4L) preferidos_ml else utils::head(unique(c(preferidos_ml, names(ml_models))), 4L)
+top_ml_names  <- if (length(preferidos_ml) >= 4L) preferidos_ml[seq_len(4L)] else utils::head(unique(c(preferidos_ml, names(ml_models))), 4L)
 
 if (length(top_ml_names) < 4L) {
   warning(sprintf(
@@ -277,7 +277,11 @@ for (mod_name in top_ml_names) {
   cat(sprintf("   [Voto ML] Evaluado %s\n", col_name))
 }
 
-top2_youden_vars <- c("pct_recovered", "pct_identity")
+top2_youden_vars <- if (!is.null(consensus_spec) && !is.null(consensus_spec$youden_voters)) {
+  intersect(as.character(consensus_spec$youden_voters), names(youden_thresholds))
+} else {
+  intersect(c("pct_recovered", "pct_identity"), names(youden_thresholds))
+}
 for (y_var in top2_youden_vars) {
   col_name <- paste0("Pred_Youden_", y_var)
   umbral_y <- youden_thresholds[[y_var]]
@@ -473,7 +477,20 @@ if (!opt$render_report) {
 } else {
   out_html <- normalizePath(opt$report_file, mustWork = FALSE)
   dir.create(dirname(out_html), recursive = TRUE, showWarnings = FALSE)
-  rendered_in_root <- file.path(dirname(qmd_inf), basename(out_html))
+
+  render_qmd <- qmd_inf
+  tmp_render_dir <- NULL
+  if (file.access(dirname(qmd_inf), 2) != 0) {
+    tmp_render_dir <- tempfile("targetcnv_qmd_")
+    dir.create(tmp_render_dir, recursive = TRUE, showWarnings = FALSE)
+    file.copy(qmd_inf, file.path(tmp_render_dir, basename(qmd_inf)), overwrite = TRUE)
+    assets_src <- file.path(project_root, "assets")
+    if (dir.exists(assets_src)) {
+      file.copy(assets_src, tmp_render_dir, recursive = TRUE)
+    }
+    render_qmd <- file.path(tmp_render_dir, basename(qmd_inf))
+  }
+  rendered_in_root <- file.path(dirname(render_qmd), basename(out_html))
 
   src_arg <- if (!is.null(opt$sources) && nzchar(trimws(opt$sources))) {
     sprintf(" -P sources_file:%s", shQuote(normalizePath(opt$sources, mustWork = FALSE)))
@@ -488,7 +505,7 @@ if (!opt$render_report) {
 
   cmd_quarto <- sprintf(
     "quarto render %s --output %s -P project_root:%s -P out_dir:%s -P consensus_verdicts:%s -P cnv_matrix:%s -P cnv_annotated:%s -P functional_genes:%s -P cnv_sensitivity:%s -P cov_threshold:%s -P top_loci:%d%s%s",
-    shQuote(qmd_inf),
+    shQuote(render_qmd),
     shQuote(basename(out_html)),
     shQuote(project_root),
     shQuote(normalizePath(opt$out_dir, mustWork = FALSE)),
@@ -513,10 +530,11 @@ if (!opt$render_report) {
   } else {
     cat(sprintf("   -> [AVISO] Falló el renderizado con Quarto (código de retorno: %d).\n", res_q))
   }
+  if (!is.null(tmp_render_dir) && dir.exists(tmp_render_dir)) {
+    unlink(tmp_render_dir, recursive = TRUE)
+  }
 }
 
 elapsed_sec <- as.numeric(difftime(Sys.time(), t_start, units = "secs"))
 
-cat("========================================================\n")
-cat(sprintf("[OK] Matriz CNV y tablas exportadas en: %s (%.2f s)\n", opt$out_dir, elapsed_sec))
-cat("========================================================\n")
+cat(sprintf("\nMatriz CNV y tablas exportadas en %s (%.2f s)\n", opt$out_dir, elapsed_sec))
