@@ -1,15 +1,6 @@
-# Procesamiento espacial de anotaciones GFF, reconciliación de ortología y matriz de CNV
+# Funciones de cruce espacial GFF, diccionario de homología y conteo de copias (CNV)
 
-#' Limpia y estandariza identificadores de secuencias de CAPTUS
-#'
-#' Extrae el identificador limpio del ortogrupo (`OG`) y construye una clave
-#' compatible con la nomenclatura de contigs ensamblados en el GFF de CAPTUS (`OGxxxx__00`).
-#'
-#' @param df Data frame con las estadísticas crudas de CAPTUS (`captus-extract_stats.tsv`).
-#' @param ref_col Nombre de la columna que contiene la referencia u ortogrupo.
-#' @param hit_col Nombre de la columna que contiene el índice numérico del hit.
-#' @return Data frame con las columnas adicionales `OG_Limpio` e `ID_GFF_Compatible`.
-#' @export
+# Estandariza IDs de CAPTUS: extrae el ortogrupo (OGxxxx) y arma la clave OGxxxx__hit.
 clean_captus_ids <- function(df, ref_col = "ref_name", hit_col = "hit") {
   stopifnot(is.data.frame(df))
   stopifnot(ref_col %in% colnames(df))
@@ -25,12 +16,7 @@ clean_captus_ids <- function(df, ref_col = "ref_name", hit_col = "hit") {
     )
 }
 
-#' Filtra características específicas de un objeto GFF/GRanges y normaliza IDs de genes
-#'
-#' @param gff Objeto `GRanges` importado con `rtracklayer::import()`.
-#' @param feature_type Tipo de anotación a conservar (ej. `"gene"` o `"protein_match:NUC"`).
-#' @return Objeto `GRanges` filtrado con columna `Locus_Ref_Limpio` normalizada.
-#' @export
+# Filtra anotaciones por tipo (p. ej. "gene" o "protein_match:NUC") y limpia prefijos de ID.
 filter_gff_features <- function(gff, feature_type = "gene") {
   stopifnot(inherits(gff, "GRanges"))
 
@@ -43,46 +29,31 @@ filter_gff_features <- function(gff, feature_type = "gene") {
   filtrado
 }
 
-#' Armoniza prefijos de cromosomas o scaffolds entre el GFF de CAPTUS y el GFF de referencia
-#'
-#' Elimina prefijos de especie o de ensamblaje únicamente cuando no existe intersección
-#' directa entre los nombres de secuencia (`seqlevels`) de ambos archivos.
-#'
-#' @param query_gff Objeto `GRanges` de CAPTUS.
-#' @param subject_gff Objeto `GRanges` de referencia.
-#' @param prefix_regex Expresión regular de prefijos a remover.
-#' @return Lista con `query_gff` y `subject_gff` armonizados.
-#' @export
+# Remueve prefijos de especie/contig cuando no hay seqlevels en común entre GFF de consulta y referencia.
 harmonize_gff_seqlevels <- function(query_gff,
                                     subject_gff,
                                     prefix_regex = "^[Ss]citrullifolium_|^[Ss]torvum_|^contig_") {
   tryCatch({
-    q_levels <- as.character(unique(query_gff@seqnames))
-    s_levels <- as.character(unique(subject_gff@seqnames))
+    q_levels <- unique(as.character(GenomicRanges::seqnames(query_gff)))
+    s_levels <- unique(as.character(GenomicRanges::seqnames(subject_gff)))
     if (length(base::intersect(q_levels, s_levels)) == 0) {
-      suppressPackageStartupMessages(library(GenomicRanges))
-      seqlevels(query_gff) <- stringr::str_remove_all(seqlevels(query_gff), prefix_regex)
-      seqlevels(subject_gff) <- stringr::str_remove_all(seqlevels(subject_gff), prefix_regex)
+      Seqinfo::seqlevels(query_gff) <- stringr::str_remove_all(
+        Seqinfo::seqlevels(query_gff), prefix_regex
+      )
+      Seqinfo::seqlevels(subject_gff) <- stringr::str_remove_all(
+        Seqinfo::seqlevels(subject_gff), prefix_regex
+      )
     }
   }, error = function(e) {
     warning(
-      sprintf("[harmonize_gff_seqlevels] No fue posible armonizar seqlevels (%s); se compararán nombres directamente.", conditionMessage(e)),
+      sprintf("No se pudieron armonizar los seqlevels (%s); se usarán los nombres originales.", conditionMessage(e)),
       call. = FALSE
     )
   })
   list(query_gff = query_gff, subject_gff = subject_gff)
 }
 
-#' Ejecuta la intersección espacial entre contigs de CAPTUS y genes del genoma de referencia
-#'
-#' Calcula los solapes de coordenadas genómicas mediante `GenomicRanges::findOverlaps`,
-#' verificando coincidencia de cromosoma y orientación de hebra cuando `ignore_strand = FALSE`.
-#'
-#' @param query_gff Objeto `GRanges` con marcadores nucleares de CAPTUS (`protein_match:NUC`).
-#' @param subject_gff Objeto `GRanges` con los genes anotados en el genoma de referencia.
-#' @param ignore_strand Lógico; `FALSE` exige coincidencia en la misma hebra.
-#' @return Data frame con pares de solape (`Captus_Row`, `Ref_Row`, `ID_Captus`, `OG_Captus`, `Locus_Ref_Limpio`).
-#' @export
+# Cruce espacial entre contigs de CAPTUS y genes de referencia (por cromosoma y hebra).
 find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE) {
   stopifnot(inherits(query_gff, "GRanges"))
   stopifnot(inherits(subject_gff, "GRanges"))
@@ -110,22 +81,22 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
     }
   }, error = function(e) {
     warning(
-      sprintf("[find_spatial_overlaps] Respaldo de comparación directa por coordenadas activado (%s).", conditionMessage(e)),
+      sprintf("findOverlaps falló (%s); usando comparación directa de intervalos.", conditionMessage(e)),
       call. = FALSE
     )
-    q_seq <- as.character(query_gff@seqnames)
-    s_seq <- as.character(subject_gff@seqnames)
+    q_seq <- as.character(GenomicRanges::seqnames(query_gff))
+    s_seq <- as.character(GenomicRanges::seqnames(subject_gff))
     if (length(base::intersect(unique(q_seq), unique(s_seq))) == 0) {
       q_seq <- stringr::str_remove_all(q_seq, prefix_regex)
       s_seq <- stringr::str_remove_all(s_seq, prefix_regex)
     }
-    q_start  <- as.integer(query_gff@ranges@start)
-    q_end    <- q_start + as.integer(query_gff@ranges@width) - 1L
-    q_strand <- as.character(query_gff@strand)
+    q_start  <- as.integer(IRanges::start(query_gff))
+    q_end    <- as.integer(IRanges::end(query_gff))
+    q_strand <- as.character(GenomicRanges::strand(query_gff))
 
-    s_start  <- as.integer(subject_gff@ranges@start)
-    s_end    <- s_start + as.integer(subject_gff@ranges@width) - 1L
-    s_strand <- as.character(subject_gff@strand)
+    s_start  <- as.integer(IRanges::start(subject_gff))
+    s_end    <- as.integer(IRanges::end(subject_gff))
+    s_strand <- as.character(GenomicRanges::strand(subject_gff))
 
     s_by_seq <- split(seq_along(s_seq), s_seq)
     q_hits_list <- vector("list", length(q_seq))
@@ -171,19 +142,11 @@ find_spatial_overlaps <- function(query_gff, subject_gff, ignore_strand = FALSE)
   df_cruces
 }
 
-#' Extrae el locus de referencia desde el atributo `Target` del GFF de CAPTUS
-#'
-#' Para ensamblajes fragmentados a escala de contigs sin anotación GFF3 cromosómica
-#' independiente (ej. *S. stellatiglandulosum*), recupera el par `<transcript_id>-<OG_ID>`
-#' registrado por Scipio/CAPTUS en el atributo `Target` y colapsa exones redundantes por hit.
-#'
-#' @param query_gff Objeto `GRanges` de CAPTUS (`protein_match:NUC`).
-#' @return Data frame con `ID_Captus`, `OG_Captus`, `Locus_Ref_Limpio`, `Contig_Name` y `Num_Gen`.
-#' @export
+# Para genomas en contigs (p. ej. S. stellatiglandulosum), extrae el gen objetivo desde el atributo Target de Scipio.
 extract_target_loci_from_gff <- function(query_gff) {
   stopifnot(inherits(query_gff, "GRanges"))
   if (!"Target" %in% colnames(GenomicRanges::mcols(query_gff))) {
-    stop("[ERROR] El GFF de CAPTUS no contiene el atributo 'Target' requerido para escala de contigs.", call. = FALSE)
+    stop("El GFF de CAPTUS no tiene el atributo 'Target' requerido para escala de contigs.", call. = FALSE)
   }
 
   data.frame(
@@ -196,7 +159,7 @@ extract_target_loci_from_gff <- function(query_gff) {
       stringr::str_extract(as.character(query_gff$Target), "^\\S+"),
       "-OG[0-9]+$"
     ),
-    Contig_Name = as.character(query_gff@seqnames),
+    Contig_Name = as.character(GenomicRanges::seqnames(query_gff)),
     stringsAsFactors = FALSE
   ) %>%
     dplyr::mutate(
@@ -205,19 +168,7 @@ extract_target_loci_from_gff <- function(query_gff) {
     dplyr::distinct()
 }
 
-#' Carga y construye el diccionario curado de ortología de referencia
-#'
-#' Integra las tablas de diseño de sondas (`Contigs_probe_design`), matrices curadas de
-#' presencia/copias (`CNV_Benoit` o `CNV_Perez`) y secuencias de referencia filtradas por
-#' las rutas metabólicas y estructurales objetivo del panel de captura:
-#' - `Storvum` y `Scitrullifolium` (escala cromosómica): relación directa locus-ortogrupo (`OG_ID`).
-#' - `S_stella` (escala de contigs): reconciliación entre grupos jerárquicos `HOG_ID` y
-#'   ortogrupos pangenómicos `OG_ID` mediante la tabla de diseño de sondas.
-#'
-#' @param dict_path Ruta al archivo de diccionario (`.xlsx`, `.tsv` o `.csv`).
-#' @param species Especie o muestra objetivo (`"Storvum"`, `"Scitrullifolium"`, `"S_stella"` o `NULL`).
-#' @return Data frame con columnas `Locus_Benoit` y `OG_Benoit` (y atributo `puente_og_hog` cuando aplica).
-#' @export
+# Carga el diccionario de homología (Excel de laboratorio o TSV/CSV) filtrado por las rutas de metabolismo secundario.
 load_reference_dictionary <- function(dict_path, species = NULL) {
   stopifnot(file.exists(dict_path))
 
@@ -231,7 +182,9 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
   )
 
   if (grepl("\\.xlsx$", dict_path, ignore.case = TRUE)) {
-    suppressPackageStartupMessages(library(readxl))
+    if (!requireNamespace("readxl", quietly = TRUE)) {
+      stop("Se requiere el paquete 'readxl' para leer diccionarios .xlsx.", call. = FALSE)
+    }
     sheets <- readxl::excel_sheets(dict_path)
 
     # Caso 1: S. stellatiglandulosum (escala de contigs, reconciliación HOG_ID <-> OG_ID)
@@ -408,19 +361,7 @@ load_reference_dictionary <- function(dict_path, species = NULL) {
   utils::read.delim(dict_path, sep = sep_char, stringsAsFactors = FALSE)
 }
 
-#' Clasifica los hits espaciales contrastando contra el diccionario curado de ortología
-#'
-#' Contrasta la identidad del locus genómico intersectado con la pertenencia al ortogrupo
-#' esperado, admitiendo validación directa `OG_ID == OG_ID` en genomas a escala cromosómica
-#' y validación mediada por tabla puente `OG_ID <-> HOG_ID` en ensamblajes a escala de contigs.
-#'
-#' @param df_cruces Data frame obtenido con `find_spatial_overlaps()` o `extract_target_loci_from_gff()`.
-#' @param dict_ref Data frame del diccionario con identificadores de locus y ortogrupo.
-#' @param locus_col Columna de locus en `df_cruces`.
-#' @param dict_locus_col Columna de locus en `dict_ref`.
-#' @param dict_og_col Columna de ortogrupo o `HOG_ID` en `dict_ref`.
-#' @return Data frame con `ID_Captus`, `Validacion_Espacial`, `Doble_Control_Biologico` y `Locus_Ref_Limpio`.
-#' @export
+# Contrasta hits espaciales contra el diccionario de homología (OG_ID directo o puente OG_ID/HOG_ID).
 classify_spatial_hits <- function(df_cruces,
                                   dict_ref,
                                   locus_col = "Locus_Ref_Limpio",
@@ -507,18 +448,7 @@ classify_spatial_hits <- function(df_cruces,
     )
 }
 
-#' Resuelve redundancias técnicas intra-locus degradando hits secundarios a `FALSE_POSITIVE`
-#'
-#' Ordena los alineamientos por `ref_len_matched` y `pct_recovered` de mayor a menor dentro
-#' de cada locus genómico validado, reteniendo únicamente el contig más completo como
-#' `TRUE_POSITIVE` y reclasificando fragmentos superpuestos como `5_TP_Redundante_Degradado`.
-#'
-#' @param df Data frame integrado con estadísticas de CAPTUS y validación espacial.
-#' @param locus_col Nombre de la columna con el locus del genoma de referencia.
-#' @param class_col Nombre de la columna con la etiqueta `Validacion_Espacial`.
-#' @param sample_col Nombre de la columna de muestra (si existe).
-#' @return Data frame sin redundancias técnicas intra-locus.
-#' @export
+# Resuelve redundancias intra-locus: conserva como TP solo el contig con mayor ref_len_matched y pct_recovered.
 resolve_redundancies <- function(df,
                                  locus_col = "Locus_Ref_Limpio",
                                  class_col = "Validacion_Espacial",
@@ -563,21 +493,7 @@ resolve_redundancies <- function(df,
   out
 }
 
-#' Prepara el conjunto de datos etiquetado (TP/FP) de una especie según la escala de su genoma
-#'
-#' Ejecuta la preparación completa para una especie con ensamblaje a escala cromosómica
-#' (`genome_scale = "chromosome"`, intersección contra GFF3 de genes) o a escala de contigs
-#' (`genome_scale = "contig"`, atributo `Target` del GFF de CAPTUS con puente `OG_ID <-> HOG_ID`).
-#'
-#' @param sample_name Nombre exacto de la muestra en `captus_stats` (ej. `"Scitrullifolium"` o `"S_stella"`).
-#' @param genome_scale Escala estructural del genoma: `"chromosome"` o `"contig"`.
-#' @param captus_gff Ruta al archivo GFF de contigs de CAPTUS (`protein_match:NUC`).
-#' @param captus_stats Ruta al archivo `captus-extract_stats.tsv`.
-#' @param dict_ref Ruta al diccionario de referencia (`.xlsx` o `.tsv`).
-#' @param gff_ref Ruta al archivo GFF3 de genes de referencia (requerido si `genome_scale == "chromosome"`).
-#' @param save_rds Ruta opcional para serializar el data frame preparado (`.rds` y `.tsv`).
-#' @return Data frame preparado con atributos de trazabilidad genómica.
-#' @export
+# Prepara el dataset etiquetado (TP/FP) de una especie receptora a escala cromosómica o de contigs.
 prepare_transfer_species_data <- function(sample_name,
                                           genome_scale = c("chromosome", "contig"),
                                           captus_gff,
@@ -588,10 +504,12 @@ prepare_transfer_species_data <- function(sample_name,
   genome_scale <- match.arg(genome_scale)
   stopifnot(file.exists(captus_gff), file.exists(captus_stats), file.exists(dict_ref))
   if (genome_scale == "chromosome" && (is.null(gff_ref) || !file.exists(gff_ref))) {
-    stop(sprintf("[ERROR] Para escala cromosómica (%s) se requiere un archivo gff_ref válido.", sample_name), call. = FALSE)
+    stop(sprintf("Para escala cromosómica (%s) hace falta un archivo gff_ref válido.", sample_name), call. = FALSE)
   }
 
-  suppressPackageStartupMessages(library(rtracklayer))
+  if (!requireNamespace("rtracklayer", quietly = TRUE)) {
+    stop("Se requiere el paquete 'rtracklayer' para importar archivos GFF/GFF3.", call. = FALSE)
+  }
   gff_captus_raw <- rtracklayer::import(captus_gff)
   gff_captus <- filter_gff_features(gff_captus_raw, feature_type = "protein_match:NUC")
 
@@ -666,21 +584,7 @@ prepare_transfer_species_data <- function(sample_name,
   stats_preparado
 }
 
-#' Extrae la matriz de variación en el número de copias (CNV) con filtro de cobertura
-#'
-#' Ordena los homólogos aceptados por cobertura (`pct_recovered`) de mayor a menor
-#' dentro de cada muestra y ortogrupo, asignando `Copia_Principal` a la secuencia de
-#' mayor cobertura, `Homologo_Confirmado` a las secuencias adicionales con cobertura
-#' `>= cov_threshold` y `No_Contado` a los fragmentos por debajo de dicho umbral.
-#'
-#' @param df Data frame con los veredictos del consenso multimodelo.
-#' @param sample_col Nombre de la columna de muestra.
-#' @param locus_col Nombre de la columna de locus u ortogrupo.
-#' @param cov_threshold Cobertura individual mínima (%) para confirmar copias adicionales (por defecto `50.0`).
-#' @param verdict_col Columna con el veredicto de consenso.
-#' @param ... Argumentos adicionales ignorados por retrocompatibilidad.
-#' @return Lista con `cnv_matrix`, `cnv_annotated` y `functional_genes`.
-#' @export
+# Cuenta copias por muestra y ortogrupo aplicando el umbral de cobertura a copias secundarias.
 extract_cnv_matrix <- function(df,
                                sample_col = "Sample",
                                locus_col = "Locus_Ortogrupo",

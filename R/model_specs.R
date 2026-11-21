@@ -1,10 +1,6 @@
-# Especificaciones de modelos supervisados, adaptador XGBoost y control determinista de CV
+# Catálogo de modelos supervisados, adaptador xgbTree para xgboost >= 3.0 y semillas CV
 
-#' Normaliza los nombres de modelos para mantener nomenclatura uniforme
-#'
-#' @param mod_list Lista nombrada de modelos o vector de nombres.
-#' @return Objeto con nombres estandarizados (`MLP`, `MLP_Regularizado`, `Stacked Autoencoder - DNN`).
-#' @export
+# Estandariza alias antiguos de redes neuronales para mantener consistencia en tablas y reportes.
 normalize_model_names <- function(mod_list) {
   if (is.null(mod_list) || length(mod_list) == 0) return(mod_list)
   if (is.character(mod_list)) {
@@ -24,14 +20,8 @@ normalize_model_names <- function(mod_list) {
   mod_list
 }
 
-#' Adaptador de `xgbTree` compatible con `xgboost >= 3.0` y `caret`
-#'
-#' Encapsula el puntero externo ALTREP (`xgb.Booster`) dentro de una lista R estándar
-#' para permitir que `caret::train()` adjunte metadatos (`xNames`, `obsLevels`, `tuneValue`),
-#' pasa `nthread` dentro de `params` y utiliza rangos de iteración indexados en base 1.
-#'
-#' @return Lista con la definición del método `xgbTree` para `caret::train`.
-#' @export
+# Envoltorio de xgbTree para xgboost >= 3.0: encapsula el booster ALTREP en una lista
+# para que caret pueda adjuntar xNames/obsLevels y usa iterationrange en base 1.
 get_safe_xgb_method <- function() {
   xgb_mod <- caret::getModelInfo("xgbTree", regex = FALSE)[[1]]
 
@@ -187,22 +177,8 @@ get_safe_xgb_method <- function() {
   xgb_mod
 }
 
-#' Construye particiones y semillas deterministas para `caret::trainControl`
-#'
-#' Deriva explícitamente `index`, `indexOut`, `tuneGrid` y la lista `seeds` a partir
-#' de `seed`, garantizando reproducibilidad idéntica con independencia del número de
-#' núcleos paralelos y preservando la secuencia aleatoria de `set.seed(seed)`.
-#'
-#' @param base_ctrl Objeto base generado por `caret::trainControl()`.
-#' @param x Data frame de predictores de entrenamiento.
-#' @param y Factor de clases de entrenamiento.
-#' @param method Cadena con el nombre del método `caret` o lista de modelo personalizado.
-#' @param tuneGrid Data frame opcional con la grilla explícita de hiperparámetros.
-#' @param tuneLength Entero con la longitud de búsqueda por defecto cuando `tuneGrid` es `NULL`.
-#' @param preProcess Vector opcional de preprocesamiento (ej. `c("center", "scale")`).
-#' @param seed Semilla entera maestra (por defecto `1234L`).
-#' @return Lista con `trControl` (enriquecido con `index` y `seeds`) y `tuneGrid`.
-#' @export
+# Construye particiones (index/indexOut) y semillas explícitas para caret::trainControl
+# de modo que los resultados bajo una misma semilla no cambien al variar el número de núcleos.
 build_deterministic_cv_control <- function(base_ctrl,
                                            x,
                                            y,
@@ -219,7 +195,7 @@ build_deterministic_cv_control <- function(base_ctrl,
 
   ctrl <- base_ctrl
   if (is.null(ctrl$index)) {
-    make_rs_fn <- tryCatch(getFromNamespace("make_resamples", "caret"), error = function(e) NULL)
+    make_rs_fn <- tryCatch(utils::getFromNamespace("make_resamples", "caret"), error = function(e) NULL)
     if (is.function(make_rs_fn)) {
       ctrl <- withr::with_seed(rs_seed, make_rs_fn(ctrl, outcome = y))
     } else {
@@ -271,12 +247,7 @@ build_deterministic_cv_control <- function(base_ctrl,
   list(trControl = ctrl, tuneGrid = grid_df)
 }
 
-#' Construye el catálogo de especificaciones de clasificadores supervisados
-#'
-#' @param n_obs Número de observaciones de entrenamiento (ajusta `n.minobsinnode` en GBM).
-#' @param extended Lógico; `TRUE` devuelve los 18 clasificadores, `FALSE` los 5 modelos base rápidos.
-#' @return Lista nombrada con las configuraciones de entrenamiento para `caret::train`.
-#' @export
+# Especificaciones de los 18 clasificadores (o los 5 modelos base en modo rápido).
 get_model_specs <- function(n_obs = 184, extended = TRUE) {
   gbm_grid <- expand.grid(
     interaction.depth = c(1, 3, 5),
@@ -325,34 +296,14 @@ get_model_specs <- function(n_obs = 184, extended = TRUE) {
   }
 }
 
-# Referencias explícitas para detección estática de motores cargados dinámicamente por caret y Quarto
-if (FALSE) {
-  library(rmarkdown)
-  library(knitr)
-  library(yaml)
-  library(DT)
-  library(plotly)
-  library(cowplot)
-  library(colorspace)
-  library(jsonlite)
-  library(htmltools)
-  library(glmnet)
-  library(klaR)
-  library(kernlab)
-  library(randomForest)
-  library(gbm)
-  library(xgboost)
-  library(RSNNS)
-  library(deepnet)
-  library(ipred)
-  library(e1071)
-  library(MASS)
-  library(nnet)
-  library(rpart)
-  library(rpart.plot)
-  library(NeuralNetTools)
-  library(caretEnsemble)
-  library(kernelshap)
-  library(shapviz)
-  library(withr)
+# Referencias para que renv detecte los motores que caret carga dinámicamente
+.register_caret_engines <- function() {
+  pkgs <- c(
+    "rmarkdown", "knitr", "yaml", "DT", "plotly", "cowplot", "colorspace",
+    "jsonlite", "htmltools", "glmnet", "klaR", "kernlab", "randomForest",
+    "gbm", "xgboost", "RSNNS", "deepnet", "ipred", "e1071", "MASS", "nnet",
+    "rpart", "rpart.plot", "NeuralNetTools", "caretEnsemble", "kernelshap",
+    "shapviz", "withr"
+  )
+  invisible(vapply(pkgs, requireNamespace, logical(1), quietly = TRUE))
 }
