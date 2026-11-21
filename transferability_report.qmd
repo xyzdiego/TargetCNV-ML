@@ -91,8 +91,12 @@ if (!models_ready) {
 La evaluación de transferibilidad aplica sin reajuste paramétrico los clasificadores entrenados en *Solanum torvum* sobre especies receptoras con distinta continuidad estructural de ensamblaje:
 
 <div class="formula-box">
-- **Escala cromosómica (`overlap`):** el etiquetado de referencia se obtiene por intersección de coordenadas genómicas y hebra (`GenomicRanges::findOverlaps`, `ignore.strand = FALSE`) entre los contigs de CAPTUS y los modelos génicos anotados en el GFF3 del genoma receptor, reteniendo el hit de mayor identidad por locus para evitar que exones fragmentados inflen los positivos.
+- **Escala cromosómica (`overlap`):** el etiquetado de referencia se obtiene por intersección de coordenadas genómicas y hebra (`GenomicRanges::findOverlaps`, `ignore.strand = FALSE`) entre los contigs de CAPTUS y los modelos génicos anotados en el GFF3 del genoma receptor, conservando por locus el hit con mayor longitud alineada (`ref_len_matched`) y cobertura (`pct_recovered`).
 - **Escala de contigs (`target_attr`):** en ensamblajes fragmentados sin pseudomoléculas cromosómicas ni GFF3 de genes completo, los identificadores de locus se extraen del atributo `Target` generado por Scipio/CAPTUS y se reconcilian los grupos jerárquicos `HOG_ID` con los ortogrupos pangenómicos `OG_ID` mediante la tabla de diseño de sondas antes de resolver redundancias intra-locus.
+</div>
+
+<div class="note-box">
+**Nota metodológica sobre `Ensamble_Stacking` y la curva de cobertura:** En esta versión del paquete, `predict_stacking_probs()` alinea explícitamente el nivel de probabilidad de `caretEnsemble::makePredObsMatrix()` (corrigiendo la inversión de probabilidades que afectaba a las predicciones crudas en el manuscrito inicial). Por otro lado, sobre las especies de referencia el consenso de 7 modelos suele descartar previamente los hits por debajo de ~80% de cobertura, por lo que la curva `--cov_threshold` (`30%` a `80%`) resulta plana en estos conjuntos y expresa su efecto principalmente en cohortes silvestres más heterogéneas.
 </div>
 
 ## Desempeño de Clasificación por Especie y Escala Genómica
@@ -185,3 +189,18 @@ if (!is.null(df_conc_pairs) && nrow(df_conc_pairs) > 0) {
 ```
 
 :::
+
+```{=html}
+<script>
+document.addEventListener("toggle", function (ev) {
+  if (ev.target && ev.target.tagName === "DETAILS" && ev.target.open) {
+    setTimeout(function () {
+      window.dispatchEvent(new Event("resize"));
+      if (window.jQuery && jQuery.fn.dataTable) {
+        jQuery.fn.dataTable.tables({ visible: true, api: true }).columns.adjust();
+      }
+    }, 60);
+  }
+}, true);
+</script>
+```

@@ -136,16 +136,19 @@ if (!is.null(df_consenso) && nrow(df_consenso) > 0) {
 
 ```{r plot_votes_distribution}
 if (!is.null(df_consenso) && "Votos_TP" %in% colnames(df_consenso)) {
+  max_v <- max(c(7L, as.integer(df_consenso$Votos_TP)), na.rm = TRUE)
+  voter_cols_n <- length(grep("^Pred_", colnames(df_consenso)))
+  if (voter_cols_n > 0L) max_v <- max(voter_cols_n, max(as.integer(df_consenso$Votos_TP), na.rm = TRUE))
   df_v <- df_consenso %>%
     dplyr::count(Votos_TP, Veredicto_Consenso, name = "Secuencias") %>%
-    dplyr::mutate(Votos_TP = factor(Votos_TP, levels = 0:7))
+    dplyr::mutate(Votos_TP = factor(Votos_TP, levels = seq.int(0L, max_v)))
   p_v <- ggplot2::ggplot(df_v, ggplot2::aes(x = Votos_TP, y = Secuencias, fill = Veredicto_Consenso)) +
     ggplot2::geom_col(width = 0.65) +
     ggplot2::scale_fill_manual(values = c("Homologo_Valido" = "#27ae60", "Ortologo_Valido" = "#27ae60", "Ruido_Descartado" = "#c0392b")) +
     ggplot2::labs(x = "Votos Positivos (TP)", y = "Secuencias", fill = "Veredicto") +
     ggplot2::theme_bw(base_size = 12)
   plotly::ggplotly(p_v) %>%
-    plotly::layout(title = list(text = "<b>Distribución de Votos Acumulados por Secuencia (0 a 7)</b>", x = 0.5), margin = list(t = 65))
+    plotly::layout(title = list(text = sprintf("<b>Distribución de Votos Acumulados por Secuencia (0 a %d)</b>", max_v), x = 0.5), margin = list(t = 65))
 }
 ```
 

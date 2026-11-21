@@ -11,6 +11,15 @@
     return;
   }
 
+  function escapeHtml(val) {
+    return String(val == null ? "" : val)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function renderWaterfall(rowNum) {
     const d = wfData.find(function (x) { return x.row === rowNum; }) || wfData[0];
     if (!d) {
@@ -18,11 +27,16 @@
     }
 
     const badgeCls = d.clase === "TP" ? "badge-tp" : "badge-fp";
+    const safeGene = escapeHtml(d.gene);
+    const safeOg = escapeHtml(d.og);
+    const safeSeq = escapeHtml(d.seq_id);
+    const safeClass = escapeHtml(d.clase);
+
     metaDiv.innerHTML =
-      "<b>Fila #" + d.row + "</b> | Clase Real: <span class='" + badgeCls + "'>" + d.clase + "</span>" +
-      " | <b>Locus:</b> <code>" + d.gene + "</code>" +
-      " | <b>Ortogrupo:</b> <code>" + d.og + "</code>" +
-      " | <b>ID:</b> <code>" + d.seq_id + "</code>" +
+      "<b>Fila #" + Number(d.row) + "</b> | Clase Real: <span class='" + badgeCls + "'>" + safeClass + "</span>" +
+      " | <b>Locus:</b> <code>" + safeGene + "</code>" +
+      " | <b>Ortogrupo:</b> <code>" + safeOg + "</code>" +
+      " | <b>ID:</b> <code>" + safeSeq + "</code>" +
       " | <b>E[f(X)]:</b> " + d.base.toFixed(3) +
       " &rarr; <b>P(TP):</b> <b>" + (d.fx * 100).toFixed(2) + "%</b>";
 

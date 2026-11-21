@@ -1,10 +1,5 @@
 # Funciones auxiliares de solo lectura y presentación interactiva para plantillas Quarto
 
-#' Lee de forma segura un archivo TSV si existe en disco
-#'
-#' @param path_str Ruta al archivo `.tsv`.
-#' @return Data frame o `NULL` si el archivo no existe.
-#' @export
 read_tsv_safe <- function(path_str) {
   if (!is.null(path_str) && nzchar(path_str) && file.exists(path_str)) {
     utils::read.delim(path_str, sep = "\t", header = TRUE, stringsAsFactors = FALSE, check.names = FALSE)
@@ -13,12 +8,7 @@ read_tsv_safe <- function(path_str) {
   }
 }
 
-#' Carga la tabla de fuentes genómicas y citas bibliográficas
-#'
-#' @param sources_param Ruta opcional proporcionada por parámetro.
-#' @param proj_root Directorio raíz del proyecto.
-#' @return Data frame con las citas bibliográficas o `NULL`.
-#' @export
+# Carga la tabla de fuentes genómicas y citas bibliográficas (sources_citations.tsv).
 load_sources_citations <- function(sources_param = "", proj_root = ".") {
   cand <- c(
     if (!is.null(sources_param) && nzchar(trimws(sources_param))) c(sources_param, file.path(proj_root, sources_param)),
@@ -33,13 +23,6 @@ load_sources_citations <- function(sources_param = "", proj_root = ".") {
   )
 }
 
-#' Busca una entrada de citación por muestra o escala estructural del genoma
-#'
-#' @param sources_df Data frame cargado con `load_sources_citations()`.
-#' @param sample_id Identificador o vector de muestras a buscar.
-#' @param genome_scale Escala de respaldo (`"chromosome"` o `"contig"`).
-#' @return Data frame de una fila o `NULL`.
-#' @export
 lookup_source_entry <- function(sources_df, sample_id = NULL, genome_scale = NULL) {
   if (is.null(sources_df) || nrow(sources_df) == 0 || !"sample_id" %in% colnames(sources_df)) return(NULL)
   if (!is.null(sample_id) && length(sample_id) > 0 && any(nzchar(sample_id))) {
@@ -54,15 +37,6 @@ lookup_source_entry <- function(sources_df, sample_id = NULL, genome_scale = NUL
   NULL
 }
 
-#' Genera el bloque HTML de trazabilidad de fuentes y archivos de entrada
-#'
-#' @param sources_df Data frame de citas bibliográficas.
-#' @param sample_ids Identificadores de muestra presentes en el conjunto de datos.
-#' @param default_scale Escala de respaldo (`"chromosome"` o `"contig"`).
-#' @param origin_files Cadena con los nombres de archivo de origen.
-#' @param box_class Clase CSS del contenedor (`"formula-box"` o `"rule-box"`).
-#' @return Cadena HTML lista para imprimirse con `cat()`.
-#' @export
 render_sources_box_html <- function(sources_df,
                                     sample_ids = NULL,
                                     default_scale = "chromosome",
@@ -82,11 +56,7 @@ render_sources_box_html <- function(sources_df,
   }
 }
 
-#' Calcula el índice compuesto con ponderación reforzada sobre el control de FDR
-#'
-#' @param df_row Fila de una tabla de benchmark con columnas `FDR`, `F1_Score`, `MCC`, `Exactitud_Balanceada` y `ROC_AUC`.
-#' @return Puntaje escalar en `[0, 1]`.
-#' @export
+# Índice compuesto con mayor peso en control de FDR (45%) para contrastar Balanceado vs. Desbalanceado.
 compute_global_fdr_score <- function(df_row) {
   fdr_v  <- suppressWarnings(as.numeric(df_row$FDR[1]))
   f1_v   <- suppressWarnings(as.numeric(df_row$F1_Score[1]))
@@ -103,13 +73,6 @@ compute_global_fdr_score <- function(df_row) {
   0.45 * (1 - fdr_v) + 0.20 * f1_v + 0.15 * mcc_v + 0.10 * bacc_v + 0.10 * auc_v
 }
 
-#' Construye una tabla DataTables exportable estándar
-#'
-#' @param df Data frame a visualizar.
-#' @param caption_txt Leyenda opcional de la tabla.
-#' @param page_len Número de filas por página.
-#' @return Objeto `DT::datatable` o `NULL`.
-#' @export
 make_export_dt <- function(df, caption_txt = NULL, page_len = 20) {
   if (is.null(df) || nrow(df) == 0) return(NULL)
   DT::datatable(
@@ -136,15 +99,7 @@ make_export_dt <- function(df, caption_txt = NULL, page_len = 20) {
   )
 }
 
-#' Formatea una tabla de benchmark con comparación cruzada entre escenarios (Balanceado vs. Desbalanceado)
-#'
-#' @param df Data frame de benchmark del escenario activo.
-#' @param other_df Data frame opcional del escenario alternativo para señalar mejoras con `*`.
-#' @param current_scen Etiqueta del escenario actual.
-#' @param other_scen Etiqueta del escenario alternativo.
-#' @param caption_text Leyenda descriptiva de la tabla.
-#' @return Objeto `DT::datatable`.
-#' @export
+# Tabla DT de benchmark con marca '*' cuando el escenario alternativo reduce FDR o sube el índice global.
 format_benchmark_dt <- function(df,
                                 other_df = NULL,
                                 current_scen = "Balanceado",
@@ -263,11 +218,6 @@ format_benchmark_dt <- function(df,
   dt
 }
 
-#' Selecciona los 6 métodos clave de síntesis (Top 2 Youden + Heurístico + Top 3 ML)
-#'
-#' @param bench_df Tabla de benchmark con columnas `Modelo`, `ROC_AUC` y `F1_Score`.
-#' @return Vector de nombres de modelos ordenados por `ROC_AUC` descendente.
-#' @export
 get_top6_summary_models <- function(bench_df) {
   if (is.null(bench_df) || nrow(bench_df) == 0) return(character(0))
 
@@ -300,11 +250,6 @@ get_top6_summary_models <- function(bench_df) {
     dplyr::pull(Modelo)
 }
 
-#' Selecciona el subconjunto estándar de 9 modelos representativos para contraste inter-especie
-#'
-#' @param bench_df Tabla de benchmark con columna `Modelo`.
-#' @return Vector con hasta 9 modelos ordenados por `ROC_AUC` descendente.
-#' @export
 get_thesis_9_models <- function(bench_df) {
   if (is.null(bench_df) || nrow(bench_df) == 0) return(character(0))
   canonical_9 <- c(
@@ -318,13 +263,6 @@ get_thesis_9_models <- function(bench_df) {
     dplyr::pull(Modelo)
 }
 
-#' Construye el gráfico de barras horizontales interactivo Plotly de benchmark multimétrica
-#'
-#' @param df_bench Tabla de benchmark.
-#' @param context_title Etiqueta del escenario o especie evaluada.
-#' @param view_label Subtítulo corto del subconjunto mostrado.
-#' @return Objeto `plotly`.
-#' @export
 build_interactive_benchmark_plotly <- function(df_bench,
                                                context_title = "Escenario Balanceado",
                                                view_label = "6 Modelos Clave") {
@@ -402,15 +340,7 @@ build_interactive_benchmark_plotly <- function(df_bench,
     )
 }
 
-#' Carga en modo de solo lectura todos los artefactos precomputados por `02_train_models.R`
-#'
-#' No ejecuta entrenamiento ni escribe archivos en `models_dir`. Si faltan artefactos
-#' de modelos en `models_dir`, devuelve `has_models = FALSE` para mostrar un aviso claro.
-#'
-#' @param models_dir Directorio con artefactos `.rds` y `.tsv` de entrenamiento.
-#' @param data_file Ruta al archivo de datos preparados (`data_prepared.rds` o `.tsv`).
-#' @return Lista estructurada con datos, benchmarks, matrices de confusión, SHAP y Spearman.
-#' @export
+# Carga en modo solo lectura los artefactos de 02_train_models.R sin entrenar ni escribir en models_dir.
 load_readonly_training_artifacts <- function(models_dir, data_file) {
   datos <- if (!is.null(data_file) && nzchar(data_file) && file.exists(data_file)) {
     if (grepl("\\.rds$", data_file, ignore.case = TRUE)) readRDS(data_file) else utils::read.delim(data_file, stringsAsFactors = FALSE)
@@ -418,8 +348,20 @@ load_readonly_training_artifacts <- function(models_dir, data_file) {
     NULL
   }
 
+  read_rds_opt <- function(fname) {
+    fp <- file.path(models_dir, fname)
+    if (file.exists(fp)) readRDS(fp) else NULL
+  }
+
+  consensus_spec <- read_rds_opt("consensus_spec.rds")
+  pred_expected <- if (!is.null(consensus_spec) && !is.null(consensus_spec$predictors)) {
+    consensus_spec$predictors
+  } else {
+    c("pct_recovered", "pct_identity", "score", "wscore")
+  }
+
   df_ml_report <- if (!is.null(datos) && "Validacion_Espacial" %in% colnames(datos)) {
-    pred_cols <- intersect(c("pct_recovered", "pct_identity", "score", "wscore"), colnames(datos))
+    pred_cols <- intersect(pred_expected, colnames(datos))
     datos %>%
       dplyr::filter(!is.na(Validacion_Espacial)) %>%
       dplyr::mutate(
@@ -431,11 +373,6 @@ load_readonly_training_artifacts <- function(models_dir, data_file) {
       as.data.frame()
   } else {
     NULL
-  }
-
-  read_rds_opt <- function(fname) {
-    fp <- file.path(models_dir, fname)
-    if (file.exists(fp)) readRDS(fp) else NULL
   }
 
   models_bal <- read_rds_opt("models_balanced.rds")
@@ -521,12 +458,6 @@ load_readonly_training_artifacts <- function(models_dir, data_file) {
   )
 }
 
-#' Dibuja la cuadrícula resumen de 6 matrices de confusión (Top 2 Youden + Heurístico + Top 3 ML)
-#'
-#' @param bench_df Tabla de benchmark del escenario.
-#' @param all_cms Lista nombrada de tablas 2x2 de confusión.
-#' @param scen_txt Etiqueta descriptiva del escenario.
-#' @export
 render_top6_summary_cms_grid <- function(bench_df, all_cms, scen_txt = "Escenario Balanceado") {
   if (is.null(bench_df) || length(all_cms) == 0) {
     cat("> *No hay matrices de confusión disponibles para este escenario.*\n")
@@ -557,17 +488,6 @@ render_top6_summary_cms_grid <- function(bench_df, all_cms, scen_txt = "Escenari
   print(cowplot::plot_grid(title_banner, grid_body, ncol = 1, rel_heights = c(0.06, 1)))
 }
 
-#' Renderiza la matriz de confusión e importancia de variables de un modelo individual
-#'
-#' @param mod_name Nombre del modelo.
-#' @param models_list Lista de modelos serializados del escenario.
-#' @param bench_df Tabla de benchmark del escenario.
-#' @param all_cms Lista de matrices de confusión del escenario.
-#' @param df_ml_report Data frame de entrenamiento preparado.
-#' @param heuristic_model Objeto del modelo heurístico.
-#' @param youden_thresholds Vector de umbrales de Youden.
-#' @param scen_label Nombre legible del escenario.
-#' @export
 render_single_model_diagnostics <- function(mod_name,
                                             models_list,
                                             bench_df,
@@ -637,12 +557,6 @@ render_single_model_diagnostics <- function(mod_name,
   }
 }
 
-#' Imprime los hiperparámetros óptimos y diagramas estructurales de un modelo entrenado
-#'
-#' @param mod_name Nombre del modelo.
-#' @param models_list Lista de modelos serializados del escenario.
-#' @param scen_label Nombre legible del escenario.
-#' @export
 render_single_model_extra <- function(mod_name, models_list, scen_label = "Escenario Balanceado") {
   if (is.null(models_list) || !mod_name %in% names(models_list)) return(invisible(NULL))
   mod_obj <- models_list[[mod_name]]
@@ -683,11 +597,7 @@ render_single_model_extra <- function(mod_name, models_list, scen_label = "Escen
   }
 }
 
-#' Genera dinámicamente las pestañas Quarto de diagnóstico para todos los modelos de un escenario
-#'
-#' @param scenario Clave del escenario (`"balanced"` o `"unbalanced"`).
-#' @param tr_art Lista devuelta por `load_readonly_training_artifacts()`.
-#' @export
+# Genera las subpestañas de diagnóstico por modelo dentro de training_report.qmd.
 build_all_model_tabs_markdown <- function(scenario = c("balanced", "unbalanced"), tr_art) {
   scenario <- match.arg(scenario)
   bench_df    <- if (scenario == "balanced") tr_art$bench_bal else tr_art$bench_unbal
@@ -698,7 +608,7 @@ build_all_model_tabs_markdown <- function(scenario = c("balanced", "unbalanced")
   ordered_models <- if (!is.null(bench_df) && nrow(bench_df) > 0) intersect(bench_df$Modelo, names(all_cms)) else names(all_cms)
   ordered_models <- c(ordered_models, setdiff(names(all_cms), ordered_models))
 
-  child_Env <- new.env(parent = globalenv())
+  child_Env <- new.env(parent = environment())
   child_Env$bench_df          <- bench_df
   child_Env$all_cms           <- all_cms
   child_Env$models_list       <- models_list
@@ -727,12 +637,7 @@ build_all_model_tabs_markdown <- function(scenario = c("balanced", "unbalanced")
   cat(res_md, sep = "\n")
 }
 
-#' Genera el explorador interactivo HTML/Plotly de contribuciones SHAP por secuencia (Waterfall)
-#'
-#' @param shap_obj Objeto `shapviz` serializado.
-#' @param df_ml_report Data frame de entrenamiento con metadatos de locus y clase real.
-#' @param proj_root Directorio raíz del proyecto para localizar `assets/waterfall.js`.
-#' @export
+# Incrusta los registros SHAP serializados y assets/waterfall.js en el HTML del reporte.
 render_shap_waterfall_html <- function(shap_obj, df_ml_report, proj_root = ".") {
   if (is.null(shap_obj) || is.null(df_ml_report)) {
     cat("> *No hay valores SHAP disponibles para construir el explorador individual.*\n")
@@ -809,11 +714,6 @@ render_shap_waterfall_html <- function(shap_obj, df_ml_report, proj_root = ".") 
   ))
 }
 
-#' Dibuja cuadrículas comparativas de matrices de confusión para transferencia filogenética
-#'
-#' @param res_sp Elemento de especie dentro de `transfer_results` (`info`, `bal`, `unbal`).
-#' @param mode Modo de selección: `"top6"`, `"thesis9"` o `"top3_f1"`.
-#' @export
 render_species_cms_grid <- function(res_sp, mode = c("top6", "thesis9", "top3_f1")) {
   mode <- match.arg(mode)
   bench_df <- res_sp$bal$benchmark
@@ -864,11 +764,6 @@ render_species_cms_grid <- function(res_sp, mode = c("top6", "thesis9", "top3_f1
   print(cowplot::plot_grid(title_banner, grid_body, ncol = 1, rel_heights = c(0.06, 1)))
 }
 
-#' Renderiza el diagnóstico individual (matriz + raincloud) de un modelo transferido
-#'
-#' @param res_sp Elemento de especie dentro de `transfer_results`.
-#' @param mod_name Nombre del modelo.
-#' @export
 render_single_transfer_model <- function(res_sp, mod_name) {
   bench_df <- res_sp$bal$benchmark
   all_cms  <- res_sp$bal$cms
@@ -918,18 +813,13 @@ render_single_transfer_model <- function(res_sp, mod_name) {
   }
 }
 
-#' Genera las subpestañas de matrices y rainclouds por modelo para una especie receptora
-#'
-#' @param sp_key Clave de la especie en `transfer_results`.
-#' @param transfer_results Lista completa leída desde `transferability_results.rds`.
-#' @export
 build_species_model_tabs_markdown <- function(sp_key, transfer_results) {
   res_sp   <- transfer_results[[sp_key]]
   bench_df <- res_sp$bal$benchmark
   all_cms  <- res_sp$bal$cms
 
   ordered_models <- unique(c(intersect(bench_df$Modelo, names(all_cms)), names(all_cms)))
-  child_Env <- new.env(parent = globalenv())
+  child_Env <- new.env(parent = environment())
   child_Env$res_sp <- res_sp
 
   bt3 <- strrep("`", 3)
@@ -952,11 +842,6 @@ build_species_model_tabs_markdown <- function(sp_key, transfer_results) {
   cat(res_md, sep = "\n")
 }
 
-#' Construye el gráfico comparativo multiespecie interactivo en Plotly
-#'
-#' @param df_multiespecie_all Data frame consolidado con métricas del donante y especies receptoras.
-#' @return Objeto `plotly` o `NULL`.
-#' @export
 build_multispecies_comparison_plotly <- function(df_multiespecie_all) {
   if (is.null(df_multiespecie_all) || nrow(df_multiespecie_all) == 0) return(NULL)
   key_mods <- c(
@@ -1007,11 +892,7 @@ build_multispecies_comparison_plotly <- function(df_multiespecie_all) {
   )
 }
 
-#' Renderiza las pestañas Quarto multiespecie de solo lectura para `transferability_report.qmd`
-#'
-#' @param transfer_results Lista precomputada por `scripts/04_evaluate_transferability.R`.
-#' @param df_multiespecie_all Tabla comparativa global multiespecie.
-#' @export
+# Ensambla las pestañas multiespecie de solo lectura para transferability_report.qmd.
 render_transfer_multispecies_tabs <- function(transfer_results, df_multiespecie_all = NULL) {
   if (is.null(transfer_results) || length(transfer_results) == 0) {
     cat(paste0(
@@ -1024,7 +905,7 @@ render_transfer_multispecies_tabs <- function(transfer_results, df_multiespecie_
     return(invisible(NULL))
   }
 
-  child_Env <- new.env(parent = globalenv())
+  child_Env <- new.env(parent = environment())
   child_Env$transfer_results    <- transfer_results
   child_Env$df_multiespecie_all <- df_multiespecie_all
 
@@ -1106,20 +987,20 @@ render_transfer_multispecies_tabs <- function(transfer_results, df_multiespecie_
       "df_t6 <- b_full %>% dplyr::filter(Modelo %in% get_top6_summary_models(b_full)) %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))\n",
       sprintf("build_interactive_benchmark_plotly(df_t6, context_title = '%s (%s)', view_label = '6 Modelos Clave')\n", sp_info$short_name, sc_short),
       sprintf("%s\n\n", bt3),
-      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}\">\n",
+      "<details>\n",
       sprintf("<summary class=\"summary-btn\">Ver Benchmark de los 9 Modelos Estandarizados (%s)</summary>\n\n", sp_info$short_name),
       sprintf("%s{r plot_thesis9_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
       sprintf("b_full <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
       "df_t9 <- b_full %>% dplyr::filter(Modelo %in% get_thesis_9_models(b_full)) %>% dplyr::arrange(dplyr::desc(ROC_AUC), dplyr::desc(F1_Score))\n",
       sprintf("build_interactive_benchmark_plotly(df_t9, context_title = '%s (%s)', view_label = '9 Modelos Estándar')\n", sp_info$short_name, sc_short),
       sprintf("%s\n\n</details>\n\n", bt3),
-      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize'));}, 60);}\">\n",
+      "<details>\n",
       sprintf("<summary class=\"summary-btn\">Ver Benchmark de Todos los Modelos Evaluados (%s)</summary>\n\n", sp_info$short_name),
       sprintf("%s{r plot_all_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
       sprintf("b_full <- transfer_results[['%s']]$bal$benchmark\n", sp_key),
       sprintf("build_interactive_benchmark_plotly(b_full, context_title = '%s (%s)', view_label = paste0('Todos los ', nrow(b_full), ' Modelos'))\n", sp_info$short_name, sc_short),
       sprintf("%s\n\n</details>\n\n", bt3),
-      "<details ontoggle=\"if(this.open){setTimeout(function(){window.dispatchEvent(new Event('resize')); if(window.jQuery && jQuery.fn.dataTable){jQuery.fn.dataTable.tables({visible:true, api:true}).columns.adjust();}}, 60);}\">\n",
+      "<details>\n",
       "<summary class=\"summary-btn\">Ver Tabla Completa de Métricas</summary>\n\n",
       "<div class=\"asterisk-note\">Los modelos marcados con <code>*</code> logran menor FDR o mayor índice global al transferirse desde su versión entrenada en el escenario desbalanceado de <i>S. torvum</i>.</div>\n\n",
       sprintf("%s{r table_full_%s, echo=FALSE, warning=FALSE, message=FALSE}\n", bt3, sp_key),
