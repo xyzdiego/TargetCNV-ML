@@ -1,10 +1,6 @@
-# Funciones de visualización diagnóstica con ggplot2 para TargetCNV-ML
+# Gráficos diagnósticos de clasificación, colinealidad, sensibilidad y CNV (ggplot2)
 
-#' Paleta de colores distintiva por modelo para matrices de confusión e importancia de variables
-#'
-#' @param model_name Nombre del modelo o estrategia evaluada.
-#' @return Lista con `high` (color principal) y `low` (color suave de fondo).
-#' @export
+# Paleta de colores por modelo para mantener consistencia entre pestañas del reporte.
 get_model_color_palette <- function(model_name) {
   palettes <- list(
     ElasticNet                  = list(high = "#16a085", low = "#e8f8f5"),
@@ -53,15 +49,7 @@ get_model_color_palette <- function(model_name) {
   list(high = "#2980b9", low = "#f1f2f6")
 }
 
-#' Grafica una matriz de confusión 2x2 con TP en la esquina superior izquierda
-#'
-#' @param cm_table Tabla o matriz 2x2 de confusión.
-#' @param title Título principal del gráfico.
-#' @param subtitle Subtítulo con métricas resumidas.
-#' @param high_color Color hexadecimal para la celda de mayor frecuencia.
-#' @param low_color Color hexadecimal para las celdas de menor frecuencia.
-#' @return Objeto `ggplot`.
-#' @export
+# Grafica una matriz de confusión 2x2 con TP en la esquina superior izquierda.
 plot_confusion_matrix <- function(cm_table,
                                   title = "Matriz de Confusión",
                                   subtitle = NULL,
@@ -119,14 +107,8 @@ plot_confusion_matrix <- function(cm_table,
     )
 }
 
-#' Calcula y grafica la importancia relativa de variables de un clasificador
-#'
-#' @param model_obj Objeto `train` de `caret` o vector numérico nombrado de pesos.
-#' @param df_data Data frame opcional con los predictores para respaldo por permutación.
-#' @param model_name Nombre del modelo para el título y paleta de color.
-#' @param high_color Color principal opcional.
-#' @return Objeto `ggplot`.
-#' @export
+# Calcula la importancia real de variables evitando el reescalado min-max (que fuerza un 0% artificial)
+# y el respaldo filterVarImp de caret en modelos sin importancia intrínseca (SVM, NB, KNN, QDA).
 plot_model_varimp <- function(model_obj,
                               df_data = NULL,
                               model_name = "Modelo",
@@ -135,25 +117,49 @@ plot_model_varimp <- function(model_obj,
   if (is.null(high_color)) high_color <- pal$high
 
   imp_df <- NULL
+  sub_label <- "Contribución relativa (%)"
+
+  scale_prop <- function(v) {
+    v <- abs(as.numeric(v))
+    v[is.na(v)] <- 0
+    tot <- sum(v)
+    if (tot > 0) (v / tot) * 100 else v
+  }
 
   if (is.numeric(model_obj) && !is.null(names(model_obj))) {
     imp_df <- data.frame(
       Variable = names(model_obj),
-      Importancia = as.numeric(model_obj),
+      Importancia = scale_prop(model_obj),
       stringsAsFactors = FALSE
     )
-  } else {
+    sub_label <- "Peso relativo proporcional (%)"
+  } else if (inherits(model_obj, "train") &&
+             identical(model_obj$method, "lda") &&
+             !is.null(model_obj$finalModel$scaling)) {
+    sc <- model_obj$finalModel$scaling[, 1]
+    imp_df <- data.frame(
+      Variable = names(sc),
+      Importancia = scale_prop(sc),
+      stringsAsFactors = FALSE
+    )
+    sub_label <- "Coeficientes discriminantes absolutos LD1 (%)"
+  } else if (inherits(model_obj, "train") &&
+             is.list(model_obj$modelInfo) &&
+             is.function(model_obj$modelInfo$varImp)) {
     imp_df <- tryCatch({
-      vi <- caret::varImp(model_obj, scale = TRUE)$importance
+      vi <- caret::varImp(model_obj, scale = FALSE)$importance
       col_pick <- if ("Overall" %in% colnames(vi)) "Overall" else if ("TP" %in% colnames(vi)) "TP" else colnames(vi)[1]
       data.frame(
         Variable = rownames(vi),
-        Importancia = as.numeric(vi[[col_pick]]),
+        Importancia = scale_prop(vi[[col_pick]]),
         stringsAsFactors = FALSE
       )
     }, error = function(e) NULL)
+    if (!is.null(imp_df)) sub_label <- "Importancia intrínseca proporcional (%)"
   }
 
+  # Modelos sin varImp intrínseco (SVM, NaiveBayes, KNN, QDA, DNN) o respaldo ante fallo:
+  # se estima la sensibilidad por permutación directamente sobre P(TP) del modelo entrenado.
   if (is.null(imp_df) || nrow(imp_df) == 0 || all(is.na(imp_df$Importancia))) {
     train_x <- if (is.list(model_obj) && !is.null(model_obj$trainingData)) {
       model_obj$trainingData[, setdiff(colnames(model_obj$trainingData), ".outcome"), drop = FALSE]
@@ -164,25 +170,28 @@ plot_model_varimp <- function(model_obj,
     }
 
     if (!is.null(train_x) && ncol(train_x) > 0) {
-      base_probs <- tryCatch(stats::predict(model_obj, newdata = train_x, type = "prob")[, "TP"], error = function(e) NULL)
+      base_probs <- tryCatch(
+        suppressWarnings(stats::predict(model_obj, newdata = train_x, type = "prob")[, "TP"]),
+        error = function(e) NULL
+      )
       if (!is.null(base_probs)) {
-        set.seed(1234)
-        scores <- sapply(colnames(train_x), function(col_v) {
-          diffs <- replicate(5, {
-            x_perm <- train_x
-            x_perm[[col_v]] <- sample(train_x[[col_v]])
-            perm_probs <- stats::predict(model_obj, newdata = x_perm, type = "prob")[, "TP"]
-            mean(abs(base_probs - perm_probs), na.rm = TRUE)
-          })
-          mean(diffs, na.rm = TRUE)
+        scores <- withr::with_seed(1234L, {
+          vapply(colnames(train_x), function(col_v) {
+            diffs <- replicate(10L, {
+              x_perm <- train_x
+              x_perm[[col_v]] <- sample(train_x[[col_v]])
+              perm_probs <- suppressWarnings(stats::predict(model_obj, newdata = x_perm, type = "prob")[, "TP"])
+              mean(abs(base_probs - perm_probs), na.rm = TRUE)
+            })
+            mean(diffs, na.rm = TRUE)
+          }, numeric(1))
         })
-        max_s <- max(scores, na.rm = TRUE)
-        if (max_s > 0) scores <- (scores / max_s) * 100
         imp_df <- data.frame(
           Variable = names(scores),
-          Importancia = as.numeric(scores),
+          Importancia = scale_prop(scores),
           stringsAsFactors = FALSE
         )
+        sub_label <- "Importancia por permutación sobre P(TP) (%)"
       }
     }
   }
@@ -199,18 +208,18 @@ plot_model_varimp <- function(model_obj,
   ggplot2::ggplot(imp_df, ggplot2::aes(x = Importancia, y = Variable, fill = Importancia)) +
     ggplot2::geom_col(width = 0.65, color = "#2c3e50", linewidth = 0.25) +
     ggplot2::geom_text(
-      ggplot2::aes(label = sprintf("%.1f", Importancia)),
+      ggplot2::aes(label = sprintf("%.1f%%", Importancia)),
       hjust = -0.15,
       size = 3.8,
       fontface = "bold",
       color = "#2c3e50"
     ) +
     ggplot2::scale_fill_gradient(low = pal$low, high = high_color) +
-    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0, 0.2))) +
+    ggplot2::scale_x_continuous(expand = ggplot2::expansion(mult = c(0, 0.22))) +
     ggplot2::labs(
       title = paste("Importancia de Variables:", model_name),
-      subtitle = "Peso relativo en la decisión del modelo",
-      x = "Importancia Relativa",
+      subtitle = sub_label,
+      x = "Contribución Relativa (%)",
       y = "Variable Predictora"
     ) +
     ggplot2::theme_minimal(base_size = 12) +
@@ -223,11 +232,7 @@ plot_model_varimp <- function(model_obj,
     )
 }
 
-#' Dibuja la topología de redes neuronales (`nnet`, `avNNet`, `MLP`, `Autoencoder`)
-#'
-#' @param model_obj Objeto `train` de `caret`.
-#' @param title Título del diagrama de arquitectura.
-#' @export
+# Diagrama de topología para redes neuronales (nnet, avNNet, MLP, DNN).
 plot_neural_net_topology <- function(model_obj,
                                      title = "Arquitectura de la Red Neuronal") {
   if (is.null(model_obj) || is.null(model_obj$finalModel)) {
@@ -364,18 +369,7 @@ plot_neural_net_topology <- function(model_obj,
   }
 }
 
-#' Grafica las distribuciones de densidad de las métricas continuas (TP vs. FP)
-#'
-#' @param df Data frame con las métricas y la columna de clase.
-#' @param response_col Nombre de la columna de respuesta (`"Validacion_Espacial"` o `"Clase"`).
-#' @param metric_cols Vector con los nombres de las métricas continuas.
-#' @param thresholds Vector nombrado opcional con los puntos de corte de Youden.
-#' @param colors Vector nombrado de colores por clase.
-#' @param title Título del gráfico.
-#' @param subtitle Subtítulo del gráfico.
-#' @param legend_position Posición de la leyenda (`"bottom"`, `"right"`, `"none"`).
-#' @return Objeto `ggplot`.
-#' @export
+# Curvas de densidad TP vs. FP por métrica continua con cortes de Youden opcionales.
 plot_metric_densities <- function(df,
                                   response_col = "Clase",
                                   metric_cols = c("pct_recovered", "pct_identity", "score", "wscore"),
@@ -402,14 +396,18 @@ plot_metric_densities <- function(df,
       values_to = "Valor"
     )
 
+  tp_col <- if ("TP" %in% names(colors)) colors[["TP"]] else if ("TRUE_POSITIVE" %in% names(colors)) colors[["TRUE_POSITIVE"]] else "#27ae60"
+  fp_col <- if ("FP" %in% names(colors)) colors[["FP"]] else if ("FALSE_POSITIVE" %in% names(colors)) colors[["FALSE_POSITIVE"]] else "#e74c3c"
+  cls_pal <- c("TP" = tp_col, "FP" = fp_col)
+
   p <- ggplot2::ggplot(
     df_long,
     ggplot2::aes(x = Valor, fill = Clase_Simple, color = Clase_Simple)
   ) +
     ggplot2::geom_density(alpha = 0.45, linewidth = 0.8) +
     ggplot2::facet_wrap(~ Metrica, scales = "free") +
-    ggplot2::scale_fill_manual(values = c("TP" = "#27ae60", "FP" = "#e74c3c")) +
-    ggplot2::scale_color_manual(values = c("TP" = "#27ae60", "FP" = "#e74c3c")) +
+    ggplot2::scale_fill_manual(values = cls_pal) +
+    ggplot2::scale_color_manual(values = cls_pal) +
     ggplot2::labs(
       title = title,
       subtitle = subtitle,
@@ -447,13 +445,6 @@ plot_metric_densities <- function(df,
   p
 }
 
-#' Grafica el mapa de calor de colinealidad por rangos de Spearman
-#'
-#' @param cor_matrix Matriz simétrica de correlaciones de Spearman (`rho`), o lista devuelta por `compute_spearman_collinearity()`.
-#' @param p_matrix Matriz opcional de p-valores asociados.
-#' @param title Título del mapa de calor.
-#' @return Objeto `ggplot`.
-#' @export
 plot_spearman_collinearity <- function(cor_matrix,
                                        p_matrix = NULL,
                                        title = "Matriz de Colinealidad por Rangos de Spearman") {
@@ -515,17 +506,7 @@ plot_spearman_collinearity <- function(cor_matrix,
     )
 }
 
-#' Grafica la curva de sensibilidad del umbral de cobertura (`--cov_threshold`, 30% a 80%)
-#'
-#' Representa las métricas de concordancia con verdad de referencia (`Concordancia_Exacta`,
-#' `Kappa_Cuadratico`, `Spearman_Rho`, `RMSE`) cuando están presentes, o bien la estabilidad
-#' del conteo de copias estimadas frente al umbral en muestras no etiquetadas.
-#'
-#' @param df_sens Data frame generado por `evaluate_cnv_threshold_sensitivity()`.
-#' @param active_threshold Umbral de cobertura operativo a resaltar (por defecto `50.0`).
-#' @param title Título principal del gráfico.
-#' @return Objeto `ggplot`.
-#' @export
+# Curva de sensibilidad de --cov_threshold (30% a 80%) con o sin referencia de copias reales.
 plot_cnv_threshold_sensitivity <- function(df_sens,
                                            active_threshold = 50.0,
                                            title = "Sensibilidad del Conteo de Copias al Umbral de Cobertura (30% - 80%)") {
@@ -622,13 +603,7 @@ plot_cnv_threshold_sensitivity <- function(df_sens,
     )
 }
 
-#' Grafica la distribución híbrida (densidad, boxplot y puntos) de puntajes en transferencia
-#'
-#' @param df_sc Data frame con columnas `Clase_Real` (`"TP"`/`"FP"`) y `Puntaje`.
-#' @param mod_name Nombre del modelo graficado.
-#' @param sp_name Nombre corto de la especie receptora.
-#' @return Objeto `ggplot`.
-#' @export
+# Raincloud (densidad + boxplot + jitter) para puntajes P(TP) en especies receptoras.
 plot_transfer_raincloud <- function(df_sc, mod_name, sp_name) {
   df_sc <- df_sc %>%
     dplyr::filter(!is.na(Puntaje) & !is.na(Clase_Real)) %>%
@@ -697,8 +672,7 @@ plot_transfer_raincloud <- function(df_sc, mod_name, sp_name) {
       y_n_pos = y_max + 0.045 * y_span
     )
 
-  set.seed(1)
-  df_sc$x_rain <- df_sc$x_num - stats::runif(nrow(df_sc), min = 0.14, max = 0.34)
+  df_sc$x_rain <- withr::with_seed(1L, df_sc$x_num - stats::runif(nrow(df_sc), min = 0.14, max = 0.34))
 
   ggplot2::ggplot() +
     ggplot2::geom_polygon(
@@ -760,15 +734,6 @@ plot_transfer_raincloud <- function(df_sc, mod_name, sp_name) {
     )
 }
 
-#' Grafica el ranking comparativo de modelos para una o múltiples métricas
-#'
-#' @param df_benchmarks Data frame de benchmark con la columna `Modelo`.
-#' @param metric_col Métrica única a graficar (ej. `"F1_Score"`).
-#' @param metric_cols Vector opcional con varias métricas para vista general.
-#' @param title Título del gráfico.
-#' @param high_color Color hexadecimal para el valor máximo en modo univariado.
-#' @return Objeto `ggplot`.
-#' @export
 plot_model_benchmarks <- function(df_benchmarks,
                                   metric_col = "F1_Score",
                                   metric_cols = NULL,
@@ -835,14 +800,6 @@ plot_model_benchmarks <- function(df_benchmarks,
     ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", hjust = 0.5), legend.position = "none")
 }
 
-#' Grafica la distribución de veredictos del sistema de consenso multimodelo
-#'
-#' @param df_consensus Data frame de salida de `consolidar_consenso()`.
-#' @param verdict_col Nombre de la columna con el veredicto (`"Veredicto_Consenso"`).
-#' @param title Título del gráfico.
-#' @param subtitle Subtítulo del gráfico.
-#' @return Objeto `ggplot`.
-#' @export
 plot_consensus_distribution <- function(df_consensus,
                                         verdict_col = "Veredicto_Consenso",
                                         title = "Clasificación de Secuencias por Consenso Multimodelo",
@@ -871,17 +828,7 @@ plot_consensus_distribution <- function(df_consensus,
     )
 }
 
-#' Grafica el mapa de calor de variación en el número de copias (CNV)
-#'
-#' @param df_cnv_annotated Data frame anotado con `Clasificacion_Copia` (opcional).
-#' @param cnv_matrix Data frame en formato ancho `Locus x Muestras` (opcional).
-#' @param sample_col Columna de muestra en `df_cnv_annotated`.
-#' @param locus_col Columna de locus u ortogrupo en `df_cnv_annotated`.
-#' @param top_n_loci Número máximo de loci más abundantes a representar (por defecto `30`).
-#' @param title Título del mapa de calor.
-#' @param subtitle Subtítulo del mapa de calor.
-#' @return Objeto `ggplot`.
-#' @export
+# Mapa de calor de copias funcionales para los top_n_loci ortogrupos más abundantes.
 plot_cnv_heatmap <- function(df_cnv_annotated = NULL,
                              cnv_matrix = NULL,
                              sample_col = "Sample",
@@ -946,12 +893,6 @@ plot_cnv_heatmap <- function(df_cnv_annotated = NULL,
     )
 }
 
-#' Grafica curvas ROC comparativas a partir de una lista de objetos `pROC::roc`
-#'
-#' @param roc_list Lista nombrada de objetos `roc`.
-#' @param title Título del gráfico.
-#' @return Objeto `ggplot`.
-#' @export
 plot_roc_curves <- function(roc_list, title = "Curvas ROC Comparativas") {
   stopifnot(is.list(roc_list))
 

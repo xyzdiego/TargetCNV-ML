@@ -38,7 +38,7 @@ test_that("cruce espacial GFF respeta cromosoma armonizado, hebra y deduplicaci√
   )
   expect_true(all(clasif$Validacion_Espacial == "TRUE_POSITIVE"))
 
-  # Dos contigs sobre el mismo locus Sol01g0010: resolve_redundancies conserva solo el de mayor identidad como TP
+  # Dos contigs sobre el mismo locus Sol01g0010: resolve_redundancies conserva solo el de mayor ref_len_matched y pct_recovered como TP
   df_integrado <- data.frame(
     ID_GFF_Compatible       = c("OG0001__00", "OG0001__01", "OG0003__00"),
     Locus_Ref_Limpio        = c("Sol01g0010", "Sol01g0010", NA_character_),

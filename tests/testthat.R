@@ -24,15 +24,19 @@ proj_root <- if (length(file_arg) > 0) {
   normalizePath("..")
 }
 
-for (mod_f in c("model_specs.R", "data_processing.R", "model_evaluation.R", "plotting.R", "report_helpers.R")) {
-  source(file.path(proj_root, "R", mod_f))
+if (file.exists(file.path(proj_root, "R", "model_specs.R"))) {
+  for (mod_f in c("model_specs.R", "data_processing.R", "model_evaluation.R", "plotting.R", "report_helpers.R")) {
+    source(file.path(proj_root, "R", mod_f))
+  }
+  Sys.setenv(TARGETCNV_PROJECT_ROOT = proj_root)
+  test_path <- file.path(proj_root, "tests", "testthat")
+} else {
+  library(TargetCNVML)
+  test_path <- "testthat"
 }
 
-Sys.setenv(TARGETCNV_PROJECT_ROOT = proj_root)
-
 testthat::test_dir(
-  path = file.path(proj_root, "tests", "testthat"),
+  path = test_path,
   reporter = "summary",
   stop_on_failure = TRUE
 )
-

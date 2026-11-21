@@ -1,30 +1,6 @@
-# Evaluación diagnóstica de clasificadores, colinealidad de Spearman, consenso y concordancia de CNV
+# Métricas de clasificación binaria, Youden, colinealidad de Spearman, consenso y concordancia CNV
 
-local({
-  if (!exists("normalize_model_names", mode = "function")) {
-    specs_candidates <- c(file.path("R", "model_specs.R"), "model_specs.R")
-    for (cand in specs_candidates) {
-      if (file.exists(cand)) {
-        source(cand, local = FALSE)
-        break
-      }
-    }
-  }
-})
-
-#' Calcula el esquema estándar de 16 métricas de clasificación binaria
-#'
-#' Estandariza las tablas de desempeño para modelos supervisados, cortes univariados
-#' de Youden, ensamble heurístico y consenso multimodelo. Devuelve `NA_real_` cuando
-#' el denominador de una tasa es cero y fija la orientación ROC en `levels = c("FP", "TP")`.
-#'
-#' @param pred Vector de clases predichas (`"TP"` o `"FP"`).
-#' @param obs Vector de clases observadas reales (`"TP"`/`"TRUE_POSITIVE"` o `"FP"`/`"FALSE_POSITIVE"`).
-#' @param positive_class Etiqueta que representa la clase positiva en `obs`.
-#' @param model_name Nombre identificador del modelo o regla evaluada.
-#' @param score Vector numérico opcional de probabilidades o puntajes continuos para `ROC_AUC`.
-#' @return Data frame de una fila con las 16 columnas de evaluación.
-#' @export
+# Calcula las 16 métricas estándar de clasificación fijando levels = c("FP", "TP") en pROC.
 compute_classification_metrics <- function(pred,
                                            obs,
                                            positive_class = "TRUE_POSITIVE",
@@ -100,13 +76,7 @@ compute_classification_metrics <- function(pred,
   )
 }
 
-#' Calcula el punto de corte óptimo de Youden (J = Sensibilidad + Especificidad - 1)
-#'
-#' @param response Vector con la variable respuesta binaria real.
-#' @param predictor Vector numérico continuo de la métrica a evaluar.
-#' @param positive_class Etiqueta de la clase positiva.
-#' @return Lista con `threshold`, `sensitivity`, `specificity`, `auc` y `roc_object`.
-#' @export
+# Punto de corte óptimo de Youden (J = Sensibilidad + Especificidad - 1) para una métrica continua.
 calculate_youden_threshold <- function(response, predictor, positive_class = "TRUE_POSITIVE") {
   stopifnot(length(response) == length(predictor))
   val_idx <- !is.na(response) & !is.na(predictor)
@@ -135,14 +105,7 @@ calculate_youden_threshold <- function(response, predictor, positive_class = "TR
   )
 }
 
-#' Evalúa múltiples predictores continuos mediante el índice J de Youden
-#'
-#' @param df Data frame de entrenamiento.
-#' @param response_col Nombre de la columna de respuesta binaria.
-#' @param metric_cols Vector con los nombres de las métricas continuas.
-#' @param positive_class Etiqueta de la clase positiva.
-#' @return Lista con `thresholds`, `binary_votes`, `benchmark` y `roc_objects`.
-#' @export
+# Evalúa varias métricas continuas con el corte de Youden y devuelve votos binarios y benchmark.
 evaluate_youden_predictors <- function(df, response_col, metric_cols, positive_class = "TRUE_POSITIVE") {
   stopifnot(is.data.frame(df))
   stopifnot(response_col %in% colnames(df))
@@ -178,15 +141,7 @@ evaluate_youden_predictors <- function(df, response_col, metric_cols, positive_c
   )
 }
 
-#' Optimiza por búsqueda en grilla los pesos del ensamble heurístico ponderado
-#'
-#' @param df_votes Data frame con votos binarios (`"TP"`/`"FP"`) por cada métrica.
-#' @param response Vector con las etiquetas reales.
-#' @param metric_cols Nombres de las columnas de métricas evaluadas.
-#' @param weight_range Rango entero de pesos a explorar (por defecto `0:3`).
-#' @param positive_class Etiqueta de la clase positiva.
-#' @return Lista con `weights`, `best_auc`, `global_threshold`, `best_scores`, `roc_object` y `benchmark_row`.
-#' @export
+# Búsqueda en grilla de pesos enteros (0:3) para el ensamble heurístico de votos de Youden.
 optimize_weighted_heuristic <- function(df_votes,
                                         response,
                                         metric_cols = colnames(df_votes),
@@ -243,14 +198,6 @@ optimize_weighted_heuristic <- function(df_votes,
   )
 }
 
-#' Predice clases binarias aplicando el ensamble heurístico ponderado
-#'
-#' @param df_predictors Data frame con las métricas continuas de nuevas muestras.
-#' @param thresholds Vector nombrado de umbrales univariados de Youden.
-#' @param weights Vector nombrado de pesos óptimos por métrica.
-#' @param global_threshold Umbral global de decisión sobre la suma ponderada.
-#' @return Factor con niveles `c("TP", "FP")`.
-#' @export
 predict_weighted_heuristic <- function(df_predictors, thresholds, weights, global_threshold) {
   stopifnot(all(names(thresholds) %in% colnames(df_predictors)))
   stopifnot(all(names(weights) %in% names(thresholds)))
@@ -268,17 +215,8 @@ predict_weighted_heuristic <- function(df_predictors, thresholds, weights, globa
   factor(preds, levels = c("TP", "FP"))
 }
 
-#' Extrae probabilidades calibradas de `TP` desde un meta-modelo `caretStack`
-#'
-#' Alinea la columna de probabilidad de los modelos base con la convención interna
-#' de `caretEnsemble::makePredObsMatrix()` (que alimenta al meta-modelo GLM con el
-#' segundo nivel del factor `levels = c("TP", "FP")`, es decir `"FP"`), evitando la
-#' inversión de probabilidades al predecir sobre nuevos conjuntos de datos.
-#'
-#' @param ens_stack Objeto de clase `caretStack`.
-#' @param newdata Data frame con los predictores continuos de evaluación.
-#' @return Vector numérico en `[0, 1]` con la probabilidad estimada de `TP`.
-#' @export
+# Probabilidades P(TP) de caretStack alineando el nivel que caretEnsemble pasa al meta-modelo GLM
+# (makePredObsMatrix alimenta el segundo nivel del factor, usualmente "FP").
 predict_stacking_probs <- function(ens_stack, newdata) {
   stopifnot(inherits(ens_stack, "caretStack"))
   base_mods <- ens_stack$models
@@ -310,13 +248,7 @@ predict_stacking_probs <- function(ens_stack, newdata) {
   as.numeric(meta_probs[["TP"]])
 }
 
-#' Consolida la votación multimodelo del sistema de consenso
-#'
-#' @param df_predictions Data frame con las columnas de predicción de cada modelo votante.
-#' @param model_cols Vector con los nombres de las columnas votantes.
-#' @param min_votes Número mínimo de votos afirmativos (`"TP"`) para declarar `Homologo_Valido`.
-#' @return Data frame enriquecido con `Votos_TP`, `Proporcion_Acuerdo` y `Veredicto_Consenso`.
-#' @export
+# Votación de consenso por mayoría (por defecto >= 4 votos TP sobre 7 modelos).
 consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   stopifnot(is.data.frame(df_predictions))
   stopifnot(all(model_cols %in% colnames(df_predictions)))
@@ -336,16 +268,7 @@ consolidar_consenso <- function(df_predictions, model_cols, min_votes = 4) {
   df_predictions
 }
 
-#' Evalúa la colinealidad por rangos de Spearman entre las métricas continuas de CAPTUS
-#'
-#' Calcula la matriz simétrica de coeficientes de correlación de Spearman (`rho`),
-#' los p-valores bilaterales exactos/asintóticos y un resumen tabular por pares para
-#' diagnosticar la redundancia estadística entre predictores antes del modelado.
-#'
-#' @param df Data frame con las variables predictoras numéricas.
-#' @param metric_cols Vector de nombres de columnas continuas a evaluar.
-#' @return Lista con `cor_matrix`, `p_matrix` y `pairs` (data frame por pares).
-#' @export
+# Matriz de correlaciones de Spearman y p-valores por pares entre métricas continuas de CAPTUS.
 compute_spearman_collinearity <- function(df,
                                           metric_cols = c("pct_recovered", "pct_identity", "score", "wscore")) {
   stopifnot(is.data.frame(df))
@@ -411,12 +334,6 @@ compute_spearman_collinearity <- function(df,
   )
 }
 
-#' Calcula el coeficiente Kappa cuadrático ponderado para conteos enteros de copias
-#'
-#' @param pred_copies Vector entero o numérico con el número de copias estimado por ortogrupo.
-#' @param real_copies Vector entero o numérico con el número real de copias por ortogrupo.
-#' @return Escalar numérico con el Kappa cuadrático ponderado (`[-1, 1]`).
-#' @export
 compute_quadratic_weighted_kappa <- function(pred_copies, real_copies) {
   stopifnot(length(pred_copies) == length(real_copies))
   ok <- !is.na(pred_copies) & !is.na(real_copies)
@@ -450,18 +367,7 @@ compute_quadratic_weighted_kappa <- function(pred_copies, real_copies) {
   1.0 - (num / den)
 }
 
-#' Extrae el conteo real de copias por muestra y ortogrupo desde un dataset etiquetado
-#'
-#' Después de resolver redundancias intra-locus, cada registro `TRUE_POSITIVE` corresponde
-#' a un locus génico distinto validado espacialmente en el genoma de referencia, incluyendo
-#' ortogrupos con cero copias reales (`CNV_Real == 0`).
-#'
-#' @param df Data frame etiquetado con `Validacion_Espacial`.
-#' @param sample_col Columna de muestra (o `"sample_name"` si `"Sample"` no existe).
-#' @param locus_col Columna de ortogrupo (o `"locus"` / `"OG_Limpio"`).
-#' @param class_col Columna con la verdad de referencia (`"Validacion_Espacial"`).
-#' @return Data frame con columnas `Sample`, `Locus_Ortogrupo` y `CNV_Real`.
-#' @export
+# Conteo de copias reales (CNV_Real) por muestra y ortogrupo tras deduplicación intra-locus.
 extract_reference_cnv <- function(df,
                                   sample_col = "Sample",
                                   locus_col = "Locus_Ortogrupo",
@@ -502,21 +408,7 @@ extract_reference_cnv <- function(df,
     )
 }
 
-#' Evalúa la concordancia de número de copias a nivel de ortogrupo (CNV estimado vs. CNV real)
-#'
-#' Contrasta el número de copias inferido (`CNV_Estimado`) contra el número real de copias
-#' (`CNV_Real`) en todos los ortogrupos evaluados (incluyendo ortogrupos con `0` copias),
-#' reportando correlación de Spearman (`rho`), Kappa cuadrático ponderado, RMSE, MAE,
-#' sesgo medio y tasa de concordancia exacta de copias.
-#'
-#' @param df_consenso Data frame con veredictos de consenso (`Veredicto_Consenso`) y `pct_recovered`.
-#' @param cov_threshold Umbral de cobertura (%) para confirmar copias adicionales (por defecto `50.0`).
-#' @param sample_col Columna de muestra en `df_consenso`.
-#' @param locus_col Columna de ortogrupo en `df_consenso`.
-#' @param verdict_col Columna de veredicto del consenso.
-#' @param true_cnv_df Data frame opcional con columnas `Sample`, `Locus_Ortogrupo` y `CNV_Real`.
-#' @return Lista con `summary` (métricas globales) y `pairs` (comparación ortogrupo por ortogrupo).
-#' @export
+# Compara CNV estimado vs. CNV real a nivel de ortogrupo (Spearman rho, Kappa cuadrático, RMSE y exacta).
 evaluate_cnv_concordance <- function(df_consenso,
                                      cov_threshold = 50.0,
                                      sample_col = "Sample",
@@ -622,20 +514,7 @@ evaluate_cnv_concordance <- function(df_consenso,
   list(summary = summary_df, pairs = pairs_df)
 }
 
-#' Genera la curva de sensibilidad del umbral `--cov_threshold` entre 30% y 80%
-#'
-#' Evalúa empíricamente cómo varía el conteo de copias (y, cuando hay verdad de referencia,
-#' la concordancia exacta, Kappa cuadrático ponderado, Spearman `rho` y RMSE) al desplazar
-#' el umbral de cobertura de homólogos adicionales en el intervalo `[30%, 80%]`.
-#'
-#' @param df_consenso Data frame con veredictos de consenso (`Veredicto_Consenso`) y `pct_recovered`.
-#' @param thresholds Vector numérico de umbrales de cobertura a explorar (por defecto `seq(30, 80, by = 5)`).
-#' @param sample_col Columna de muestra.
-#' @param locus_col Columna de ortogrupo.
-#' @param verdict_col Columna de veredicto del consenso.
-#' @param true_cnv_df Data frame opcional con `Sample`, `Locus_Ortogrupo` y `CNV_Real`.
-#' @return Data frame con una fila por cada umbral evaluado.
-#' @export
+# Barrido del umbral --cov_threshold (30% a 80%) para calibrar el conteo de copias adicionales.
 evaluate_cnv_threshold_sensitivity <- function(df_consenso,
                                                thresholds = seq(30, 80, by = 5),
                                                sample_col = "Sample",
@@ -709,21 +588,7 @@ evaluate_cnv_threshold_sensitivity <- function(df_consenso,
   dplyr::bind_rows(rows)
 }
 
-#' Evalúa la transferibilidad filogenética de todos los modelos sobre una especie receptora
-#'
-#' Aplica sin reentrenamiento los cortes univariados de Youden, el modelo heurístico
-#' ponderado, los clasificadores supervisados (incluyendo `Ensamble_Stacking`) y el
-#' consenso de 7 modelos sobre el conjunto etiquetado de una especie receptora.
-#'
-#' @param df_sp Data frame preparado de la especie receptora con `Validacion_Espacial`.
-#' @param models_list Lista nombrada de modelos supervisados (`models_balanced` o `models_unbalanced`).
-#' @param youden_thresholds Vector nombrado de umbrales univariados de Youden.
-#' @param heuristic_model Lista con los pesos y umbral global del modelo heurístico.
-#' @param predictors Vector de nombres de predictores continuos (por defecto las 4 métricas base).
-#' @param ml_voters Vector con los 4 clasificadores supervisados que integran el consenso de 7 modelos.
-#' @param min_votes Mínimo de votos afirmativos para el consenso (por defecto `4L`).
-#' @return Lista con `df_clean`, `df_consensus`, `benchmark`, `cms`, `scores` y `preds`.
-#' @export
+# Evalúa sin reentrenamiento los modelos de la especie donante sobre una especie receptora.
 evaluate_species_transferability <- function(df_sp,
                                              models_list,
                                              youden_thresholds = NULL,
@@ -782,10 +647,18 @@ evaluate_species_transferability <- function(df_sp,
   }
 
   if (!is.null(heuristic_model) && !is.null(youden_thresholds)) {
-    m_names  <- names(heuristic_model$weights)
-    v_mat    <- sapply(m_names, function(m) as.numeric(x_new[[m]] >= youden_thresholds[[m]]))
+    m_names <- names(heuristic_model$weights)
+    v_mat <- matrix(0, nrow = nrow(x_new), ncol = length(m_names))
+    for (j in seq_along(m_names)) {
+      v_mat[, j] <- as.numeric(x_new[[m_names[j]]] >= youden_thresholds[[m_names[j]]])
+    }
     scores_h <- as.vector(v_mat %*% heuristic_model$weights)
-    pred_h   <- factor(ifelse(scores_h >= heuristic_model$global_threshold, "TP", "FP"), levels = c("TP", "FP"))
+    pred_h <- predict_weighted_heuristic(
+      df_predictors = x_new,
+      thresholds = youden_thresholds,
+      weights = heuristic_model$weights,
+      global_threshold = heuristic_model$global_threshold
+    )
     rows[["Weighted_Heuristic"]] <- compute_classification_metrics(
       pred = pred_h, obs = y_obs, score = scores_h, positive_class = "TP", model_name = "Weighted_Heuristic"
     )
