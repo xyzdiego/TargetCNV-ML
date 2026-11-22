@@ -12,6 +12,7 @@ From: ubuntu:24.04
 %files
     DESCRIPTION /opt/targetcnv-ml/DESCRIPTION
     NAMESPACE /opt/targetcnv-ml/NAMESPACE
+    LICENSE /opt/targetcnv-ml/LICENSE
     renv.lock /opt/targetcnv-ml/renv.lock
     renv/settings.json /opt/targetcnv-ml/renv/settings.json
     targetcnv.sh /opt/targetcnv-ml/targetcnv.sh
@@ -21,6 +22,7 @@ From: ubuntu:24.04
     transferability_report.qmd /opt/targetcnv-ml/transferability_report.qmd
     assets /opt/targetcnv-ml/assets
     R /opt/targetcnv-ml/R
+    man /opt/targetcnv-ml/man
     scripts /opt/targetcnv-ml/scripts
     tests /opt/targetcnv-ml/tests
     data/reference/sources_citations.tsv /opt/targetcnv-ml/data/reference/sources_citations.tsv
@@ -115,7 +117,7 @@ From: ubuntu:24.04
     quarto --version | grep -q "1.10.20"
     Rscript -e '
       .libPaths(c("/opt/targetcnv-ml/library", .libPaths()))
-      pkgs <- c("caret", "xgboost", "caretEnsemble", "GenomicRanges", "rtracklayer", "pROC", "testthat")
+      pkgs <- c("caret", "xgboost", "caretEnsemble", "GenomicRanges", "Seqinfo", "rtracklayer", "pROC", "testthat")
       missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
       if (length(missing) > 0) stop("Missing packages: ", paste(missing, collapse = ", "))
     '
